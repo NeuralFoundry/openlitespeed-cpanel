@@ -1,0 +1,18 @@
+#!/bin/sh
+# olscp-httpd-wrapper
+REAL=/usr/sbin/httpd.olscp-apache
+CTL=/usr/local/olscp/bin/olscp
+if [ -f /etc/olscp/active ] && [ -x "$CTL" ]; then
+    act=""
+    prev=""
+    for a in "$@"; do
+        [ "$prev" = "-k" ] && act="$a"
+        prev="$a"
+    done
+    case "$act" in
+        start|restart|graceful|stop|graceful-stop)
+            exec "$CTL" httpd "$act"
+            ;;
+    esac
+fi
+exec "$REAL" "$@"

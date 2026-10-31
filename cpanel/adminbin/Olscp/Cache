@@ -1,0 +1,31 @@
+#!/usr/local/cpanel/3rdparty/bin/perl
+
+package bin::admin::Olscp::Cache;
+
+use strict;
+use warnings;
+
+use parent 'Cpanel::AdminBin::Script::Call';
+
+__PACKAGE__->run( alarm => 120 ) if !caller;
+
+sub _actions { return qw(PURGE) }
+
+sub PURGE {
+    my ( $self, $domain ) = @_;
+    my $user = $self->get_caller_username();
+    die "invalid domain\n" unless defined $domain && $domain =~ /\A[A-Za-z0-9._-]{1,253}\z/;
+    my $pid = open( my $fh, '-|' );
+    die "fork failed\n" unless defined $pid;
+    if ( !$pid ) {
+        open( STDERR, '>&', \*STDOUT );
+        exec( '/usr/local/olscp/bin/olscp', 'cache', 'purge', '--user', $user, '--vhost', $domain ) or exit 127;
+    }
+    local $/;
+    my $out = <$fh>;
+    close $fh;
+    die "purge failed\n" if $? != 0;
+    return 1;
+}
+
+1;

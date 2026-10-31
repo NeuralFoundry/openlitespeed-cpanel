@@ -1,0 +1,602 @@
+[%- USE date;
+   st = data.status; ols = st.ols; ls = st.last_sync; s = data.settings; pg = data.page;
+   base = cp_security_token _ '/cgi/olscp/index.cgi';
+   build = st.ols_build == 'olscp' ? 'olscp build' : (st.ols_build == 'official' ? 'Official build' : '');
+   IF st.error; state = 'down'; ELSIF st.active && ols.running; state = 'run'; ELSIF st.active; state = 'down'; ELSE; state = 'apache'; END;
+   NAV = [
+     ['home', 'Dashboard'], ['sites', 'Sites'], ['stats', 'Statistics'], ['cache', 'Cache'], ['htaccess', '.htaccess'],
+     ['apache', 'Apache'], ['security', 'Security'], ['limits', 'Limits'], ['php', 'PHP'], ['version', 'Version'],
+     ['settings', 'Settings'], ['logs', 'Logs']
+   ];
+   navp = pg == 'quic' ? 'cache' : pg;
+   L = {
+     php_mode => 'PHP handler', lsphp_children => 'LSAPI children', lsphp_max_conns => 'LSAPI connections',
+     mem_limit => 'Process memory limit', proc_soft_limit => 'Process limit (soft)', proc_hard_limit => 'Process limit (hard)',
+     workers => 'Workers (0 = auto)', max_conns => 'Max connections', keepalive_timeout => 'Keep-alive timeout (s)',
+     conn_timeout => 'Connection timeout (s)', max_req_body => 'Max request body',
+     http2 => 'HTTP/2', http3 => 'HTTP/3 (QUIC)', brotli => 'Brotli', ipv6 => 'IPv6 listener',
+     cache_module => 'LSCache module', modsecurity => 'ModSecurity', autoindex => 'Directory listing', lscwp_version => 'LSCache plugin version',
+     htaccess_watch => 'Watch .htaccess files', htaccess_scan_interval => 'Full scan interval (s)',
+     webadmin_enabled => 'WebAdmin console', webadmin_listen => 'WebAdmin address'
+   };
+   SELECTS = { php_mode => ['auto','fpm','lsapi'], modsecurity => ['auto','off'], ipv6 => ['auto','on','off'], autoindex => ['auto','on','off'] };
+   GROUPS = [
+     ['PHP', ['php_mode','lsphp_children','lsphp_max_conns','mem_limit','proc_soft_limit','proc_hard_limit']],
+     ['Connections', ['workers','max_conns','keepalive_timeout','conn_timeout','max_req_body']],
+     ['Protocols', ['http2','http3','brotli','ipv6']],
+     ['Features', ['cache_module','modsecurity','autoindex','lscwp_version']],
+     ['.htaccess', ['htaccess_watch','htaccess_scan_interval']],
+     ['WebAdmin', ['webadmin_enabled','webadmin_listen']]
+   ];
+   BOOLS = { http2 => 1, http3 => 1, brotli => 1, cache_module => 1, htaccess_watch => 1, webadmin_enabled => 1 };
+-%]
+[% MACRO act(name, label, cls, confirm, extra) BLOCK -%]
+<form method="post" action="[% base %]" class="o-f"[% IF confirm %] data-c="[% confirm | html %]" onsubmit="return confirm(this.dataset.c)"[% END %]><input type="hidden" name="action" value="[% name %]"><input type="hidden" name="page" value="[% pg %]">[% extra %]<button type="submit" class="[% cls || 'o-link' %]">[% label | html %]</button></form>
+[%- END %]
+[% MACRO badge(kind, label) BLOCK %]<span class="o-b o-b-[% kind %]">[% label | html %]</span>[% END %]
+[% MACRO onoff(v) BLOCK %][% IF v %][% badge('ok', 'On') %][% ELSE %][% badge('off', 'Off') %][% END %][% END %]
+[% MACRO ts(t, fmt) BLOCK %][% IF t %][% date.format(t, fmt || '%Y-%m-%d %H:%M') %][% ELSE %]never[% END %][% END %]
+[% MACRO mb(bytes) BLOCK %][% (bytes / 1048576) | format('%.1f') %] MB[% END %]
+[% WRAPPER 'master_templates/master.tmpl'
+    app_key = 'olscp'
+    header = 'OpenLiteSpeed'
+    breadcrumburl = '/cgi/olscp/index.cgi'
+-%]
+[% IF data.refresh %]<meta http-equiv="refresh" content="[% data.refresh %]">[% END %]
+<style>
+.o{--ink:#18242c;--mute:#5d6c75;--rule:#dbe2e6;--soft:#f4f7f8;--accent:#0b6e78;--accent-d:#085a62;--ok:#17703f;--okbg:#e2f2e8;--warn:#875a00;--warnbg:#fcf0d4;--bad:#b42318;--badbg:#fde7e5;--offc:#5f6d76;--offbg:#edf1f3;
+  color:var(--ink);max-width:1200px;font-size:13px;line-height:1.45;font-variant-numeric:tabular-nums;display:grid;grid-template-columns:minmax(0,1fr);min-width:0}
+.o *{box-sizing:border-box}
+.o>*{min-width:0}
+.o a{color:var(--accent);font-weight:600;text-decoration:none}
+.o a:hover{text-decoration:underline}
+.o a:focus-visible,.o button:focus-visible,.o input:focus-visible,.o select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.o h2{font-size:15px;font-weight:700;margin:0;line-height:1.3;color:var(--ink)}
+.o h3{font-size:13px;font-weight:700;margin:18px 0 8px;color:var(--ink)}
+.o-f{display:inline;margin:0}
+.o-panel{display:flex;flex-wrap:wrap;align-items:center;gap:16px 28px;background:#13232c;color:#e7eff2;border-radius:10px;padding:16px 20px;margin:0 0 14px}
+.o-state{display:flex;align-items:center;gap:12px;min-width:240px}
+.o-led{width:12px;height:12px;border-radius:50%;flex:0 0 12px;background:#7d8b93}
+.o-panel.run .o-led{background:#36d07f;box-shadow:0 0 0 4px rgba(54,208,127,.18),0 0 12px rgba(54,208,127,.55)}
+.o-panel.apache .o-led{background:#f0b429;box-shadow:0 0 0 4px rgba(240,180,41,.18)}
+.o-panel.down .o-led{background:#f25f5c;box-shadow:0 0 0 4px rgba(242,95,92,.2)}
+.o-state-t{font-size:17px;font-weight:700;color:#fff;line-height:1.2}
+.o-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px}
+.o-tag{font-size:11px;font-weight:600;color:#a9bcc4;border:1px solid #2f4651;border-radius:4px;padding:1px 6px;white-space:nowrap}
+.o-tag.live{color:#9ff0c4;border-color:#2d6a4b}
+.o-read{display:flex;flex-wrap:wrap;gap:6px 26px;margin:0}
+.o-read div{min-width:64px}
+.o-read dt{font-size:11px;font-weight:600;color:#93a8b1;margin:0}
+.o-read dd{font-size:21px;font-weight:600;color:#fff;margin:0;line-height:1.15}
+.o-acts{display:flex;flex-wrap:wrap;gap:8px;margin-left:auto}
+.o-panel .o-btn{background:transparent;border-color:#3d5763;color:#e7eff2}
+.o-panel .o-btn.pri{background:#e7eff2;border-color:#e7eff2;color:#13232c}
+.o-nav{display:flex;gap:2px;overflow-x:auto;border-bottom:1px solid var(--rule);margin:0 0 16px;scrollbar-width:thin}
+.o-nav a{display:block;padding:8px 12px 9px;color:var(--mute);font-weight:600;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+.o-nav a:hover{color:var(--ink);text-decoration:none}
+.o-nav a.on{color:var(--ink);border-bottom-color:var(--accent)}
+.o-btn{display:inline-block;padding:6px 13px;border-radius:6px;border:1px solid var(--rule);background:#fff;color:var(--ink);font-weight:600;font-size:13px;line-height:1.3;cursor:pointer;white-space:nowrap}
+.o-btn:hover{border-color:#b9c6cc;text-decoration:none}
+.o-btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.o-btn.pri:hover{background:var(--accent-d)}
+.o-btn.dan{color:var(--bad)}
+.o-link{background:none;border:0;padding:0;color:var(--accent);font-weight:600;font-size:13px;cursor:pointer;text-align:left}
+.o-link:hover{text-decoration:underline}
+.o-link.dan{color:var(--bad)}
+.o-b{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap;line-height:1.6}
+.o-b-ok{background:var(--okbg);color:var(--ok)}.o-b-warn{background:var(--warnbg);color:var(--warn)}.o-b-bad{background:var(--badbg);color:var(--bad)}.o-b-off{background:var(--offbg);color:var(--offc)}
+.o-msg{padding:10px 14px;border-radius:8px;margin:0 0 14px;font-weight:600}
+.o-msg.ok{background:var(--okbg);color:var(--ok)}.o-msg.bad{background:var(--badbg);color:var(--bad)}.o-msg.info{background:#e3f0f2;color:#0a4f57}.o-msg.warn{background:var(--warnbg);color:var(--warn)}
+.o-msg code{background:rgba(255,255,255,.7);padding:1px 6px;border-radius:4px;font-size:13px}
+.o-dash{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;align-items:start}
+.o-col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.o-sec{background:#fff;border:1px solid var(--rule);border-radius:10px;min-width:0}
+.o-sec-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--rule)}
+.o-sec-h .o-more{margin-left:auto;font-size:12.5px}
+.o-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px;background:#9aa7ae}
+.o-dot.ok{background:#22a35a}.o-dot.warn{background:#d69e2e}.o-dot.bad{background:#d64545}
+.o-rows{padding:4px 0}
+.o-row{display:grid;grid-template-columns:minmax(120px,38%) minmax(0,1fr) auto;align-items:center;gap:10px;padding:7px 16px;min-height:36px}
+.o-row+.o-row{border-top:1px solid #eef2f4}
+.o-k{color:var(--mute);font-weight:600}
+.o-v{min-width:0;overflow-wrap:anywhere}
+.o-a{text-align:right;white-space:nowrap}
+.o-a .o-f+.o-f,.o-a a+.o-f,.o-a .o-f+a{margin-left:12px}
+.o-sub{color:var(--mute);font-size:12px}
+.o-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 14px}
+.o-meta{display:flex;flex-wrap:wrap;gap:6px 22px;margin:0 0 14px;color:var(--mute)}
+.o-meta b{color:var(--ink)}
+.o-scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:#fff}
+.o-t{width:100%;border-collapse:collapse;font-size:13px;margin:0}
+.o-t th{text-align:left;font-weight:700;color:var(--mute);font-size:12px;padding:9px 12px;border-bottom:1px solid var(--rule);background:var(--soft);white-space:nowrap}
+.o-t td{padding:8px 12px;border-top:1px solid #eef2f4;vertical-align:top}
+.o-t tr:first-child td{border-top:0}
+.o-t td.w{overflow-wrap:anywhere;min-width:180px}
+.o-t td.n{white-space:nowrap}
+.o-t .o-sub{display:block}
+.o-empty{padding:18px 16px;color:var(--mute);font-weight:600}
+.o-form{background:#fff;border:1px solid var(--rule);border-radius:10px;padding:6px 16px 14px;max-width:760px}
+.o-form h3:first-of-type{margin-top:10px}
+.o-fr{display:grid;grid-template-columns:240px minmax(0,1fr);gap:12px;align-items:center;padding:6px 0}
+.o-fr label{font-weight:600}
+.o-fr input[type=text],.o-fr input[type=number],.o-fr select{width:100%;max-width:360px;padding:6px 9px;border:1px solid var(--rule);border-radius:6px;background:#fff;font-size:13px;height:auto}
+.o-fr input[type=checkbox]{width:16px;height:16px;margin:0}
+.o-fr .o-ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.o-fend{padding-top:12px}
+.o-pre{max-height:480px;overflow:auto;font-family:Menlo,Consolas,"Liberation Mono",monospace;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;border:1px solid var(--rule);border-radius:10px;padding:12px 14px;margin:0}
+.o-chips{display:flex;flex-wrap:wrap;gap:6px;padding:12px 16px}
+.o-chip{background:var(--soft);border:1px solid var(--rule);border-radius:5px;padding:1px 7px;font-size:12px;font-weight:600}
+.o-prog{height:6px;background:#e7edf0;border-radius:3px;overflow:hidden;margin:8px 0}
+.o-prog span{display:block;height:100%;background:var(--accent)}
+.o-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));border:1px solid var(--rule);border-radius:10px;background:#fff;margin:0 0 16px;overflow:hidden}
+.o-tile{padding:12px 16px;border-right:1px solid #eef2f4;border-bottom:1px solid #eef2f4}
+.o-tile dt{color:var(--mute);font-size:12px;font-weight:600;margin:0}
+.o-tile dd{font-size:20px;font-weight:700;margin:2px 0 0}
+.o-lim{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.o-lim input{width:84px;padding:5px 7px;border:1px solid var(--rule);border-radius:6px;font-size:13px}
+.o-grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin:0 0 16px}
+@media (max-width:900px){.o-dash{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:640px){
+  .o-panel{padding:14px 16px}.o-acts{margin-left:0}
+  .o-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"k a" "v v"}
+  .o-row .o-k{grid-area:k}.o-row .o-v{grid-area:v}.o-row .o-a{grid-area:a}
+  .o-fr{grid-template-columns:minmax(0,1fr);gap:4px}
+}
+</style>
+
+<div class="o">
+<section class="o-panel [% state %]">
+  <div class="o-state"><span class="o-led"></span><div>
+    <div class="o-state-t">[% IF st.error %]Status unavailable[% ELSIF state == 'run' %]OpenLiteSpeed is running[% ELSIF state == 'down' %]OpenLiteSpeed is stopped[% ELSE %]Apache is serving[% END %]</div>
+    <div class="o-tags">
+      [% IF ols.version %]<span class="o-tag">OpenLiteSpeed [% ols.version | html %]</span>[% END %]
+      [% IF build %]<span class="o-tag">[% build | html %]</span>[% END %]
+      [% IF st.live_htaccess %]<span class="o-tag live">Live .htaccess</span>[% END %]
+      [% IF data.preview.running %]<span class="o-tag">Preview on 8080/8443</span>[% END %]
+      <span class="o-tag">olscp [% data.version | html %]</span>
+    </div>
+  </div></div>
+  [% IF ols.running %]
+  <dl class="o-read">
+    [% IF data.stats.server %]<div><dt>Requests/s</dt><dd>[% data.stats.server.REQ_PER_SEC || 0 %]</dd></div>[% END %]
+    <div><dt>Workers</dt><dd>[% ols.workers || 0 %]</dd></div>
+    <div><dt>Sites</dt><dd>[% ls.vhosts || 0 %]</dd></div>
+    [% IF data.uptime %]<div><dt>Uptime</dt><dd>[% data.uptime | html %]</dd></div>[% END %]
+  </dl>
+  [% END %]
+  <div class="o-acts">
+  [% IF st.active %]
+    [% act('restart', 'Restart', 'o-btn pri') %]
+    [% act('disable', 'Switch to Apache', 'o-btn', 'Switch the web server back to Apache?') %]
+  [% ELSE %]
+    [% act('enable', 'Switch to OpenLiteSpeed', 'o-btn pri', 'Switch the web server to OpenLiteSpeed?') %]
+  [% END %]
+  </div>
+</section>
+
+<nav class="o-nav" aria-label="OpenLiteSpeed">
+[% FOREACH n IN NAV %]<a href="[% base %][% IF n.0 != 'home' %]?page=[% n.0 %][% END %]"[% IF navp == n.0 %] class="on" aria-current="page"[% END %]>[% n.1 | html %]</a>[% END %]
+</nav>
+
+[% IF st.error %]<div class="o-msg bad">olscp: [% st.error | html %]</div>[% END %]
+[% IF data.result.defined('ok') %]
+  [% IF data.result.ok %]<div class="o-msg ok">Done[% IF data.result.steps.size %]: [% data.result.steps.join(', ') | html %][% END %]</div>
+  [% ELSE %]<div class="o-msg bad">Failed: [% data.result.error | html %]</div>[% END %]
+[% END %]
+[% IF data.result.password %]<div class="o-msg info">New WebAdmin password: <code>[% data.result.password | html %]</code></div>[% END %]
+[% IF st.active && st.watcher && st.watcher != 'active' %]<div class="o-msg warn">Watcher is [% st.watcher | html %]</div>[% END %]
+
+[% SWITCH pg %]
+
+[% CASE 'home' %]
+[% c = data.cache; job = c.job; sites_n = c.sites.size || 0; en = 0; FOREACH x IN c.sites; IF x.lscache == 'enabled'; en = en + 1; END; END;
+   htn = 0; FOREACH v IN data.ht.report.pairs; htn = htn + v.value.size; END;
+   lim_n = 0; FOREACH u IN data.limits.users; IF u.limits.size; lim_n = lim_n + 1; END; END;
+   blk = data.stats.blocked.size || 0 %]
+<div class="o-dash">
+<div class="o-col">
+  <section class="o-sec">
+    <div class="o-sec-h"><span class="o-dot [% state == 'run' ? 'ok' : (state == 'down' ? 'bad' : 'warn') %]"></span><h2>Web server</h2><a class="o-more" href="[% base %]?page=stats">Statistics</a></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">Serving</span><span class="o-v">[% IF st.active %][% badge('ok', 'OpenLiteSpeed') %][% ELSE %][% badge('warn', 'Apache') %][% END %]</span>
+        <span class="o-a">[% IF st.active %][% act('disable', 'Switch to Apache', '', 'Switch the web server back to Apache?') %][% ELSE %][% act('enable', 'Switch to OpenLiteSpeed', '', 'Switch the web server to OpenLiteSpeed?') %][% END %]</span></div>
+      [% IF st.active %]
+      <div class="o-row"><span class="o-k">Configuration</span><span class="o-v">[% IF ls.time %]Synced [% ts(ls.time, '%H:%M:%S') %][% IF ls.restarted %] <span class="o-sub">with restart</span>[% END %][% ELSE %]Not synced[% END %]</span>
+        <span class="o-a">[% act('sync', 'Sync now') %][% act('restart', 'Restart') %]</span></div>
+      <div class="o-row"><span class="o-k">Watcher</span><span class="o-v">[% IF st.watcher == 'active' %][% badge('ok', 'Running') %][% ELSE %][% badge('bad', st.watcher || 'Unknown') %][% END %]</span><span class="o-a"><a href="[% base %]?page=logs">Logs</a></span></div>
+      [% ELSE %]
+      <div class="o-row"><span class="o-k">Preview</span><span class="o-v">[% IF data.preview.running %][% badge('warn', 'Ports 8080/8443') %][% ELSE %][% badge('off', 'Off') %][% END %]</span>
+        <span class="o-a">[% IF data.preview.running %][% act('preview_stop', 'Stop preview') %][% ELSE %][% act('preview_start', 'Start preview') %][% END %]</span></div>
+      [% END %]
+      <div class="o-row"><span class="o-k">Version</span><span class="o-v">[% ols.version | html %][% IF build %] <span class="o-sub">[% build | html %]</span>[% END %]</span><span class="o-a"><a href="[% base %]?page=version">Manage</a></span></div>
+      <div class="o-row"><span class="o-k">PHP</span><span class="o-v">[% s.php_mode | upper | html %][% IF s.http3 %] <span class="o-sub">HTTP/3 on</span>[% END %]</span><span class="o-a"><a href="[% base %]?page=php">Versions</a></span></div>
+      <div class="o-row"><span class="o-k">WebAdmin console</span><span class="o-v">[% onoff(s.webadmin_enabled) %]</span>
+        <span class="o-a">[% IF s.webadmin_enabled %][% act('webadmin_reset', 'Reset password', '', 'Generate a new WebAdmin password?') %][% ELSE %]<a href="[% base %]?page=settings#webadmin">Settings</a>[% END %]</span></div>
+    </div>
+  </section>
+
+  <section class="o-sec">
+    <div class="o-sec-h"><span class="o-dot [% htn ? 'warn' : 'ok' %]"></span><h2>.htaccess and Apache configuration</h2><a class="o-more" href="[% base %]?page=apache">Apache</a></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">.htaccess</span><span class="o-v">[% IF st.live_htaccess %][% badge('ok', 'Live') %][% ELSE %]Applied on change (graceful restart)[% END %]</span>
+        <span class="o-a">[% IF !st.live_htaccess %]<a href="[% base %]?page=version#build">Enable live</a>[% END %]</span></div>
+      <div class="o-row"><span class="o-k">Files</span><span class="o-v">[% data.ht.files || 0 %] <span class="o-sub">scanned [% ts(data.ht.scanned) %]</span></span><span class="o-a">[% act('htaccess_scan', 'Rescan') %]</span></div>
+      <div class="o-row"><span class="o-k">Not applied</span><span class="o-v">[% IF htn %][% badge('warn', htn _ ' file' _ (htn == 1 ? '' : 's')) %][% ELSE %][% badge('ok', 'None') %][% END %]</span><span class="o-a"><a href="[% base %]?page=htaccess">Report</a></span></div>
+    </div>
+  </section>
+</div>
+
+<div class="o-col">
+  <section class="o-sec">
+    <div class="o-sec-h"><span class="o-dot [% en ? 'ok' : '' %]"></span><h2>LiteSpeed Cache for WordPress</h2><a class="o-more" href="[% base %]?page=cache">Manage</a></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">Cache enabled</span><span class="o-v"><b>[% en %]</b> of [% sites_n %] sites</span><span class="o-a">[% act('cache_mass_enable', 'Enable all', '', 'Enable LSCache on every unflagged WordPress site?') %]</span></div>
+      <div class="o-row"><span class="o-k">Plugin version</span><span class="o-v">[% s.lscwp_version | html %]</span><span class="o-a"><a href="[% base %]?page=cache#ver">Change</a></span></div>
+      [% IF job.running %]<div class="o-row"><span class="o-k">Running job</span><span class="o-v">[% job.action | html %]</span><span class="o-a">[% badge('warn', job.done _ ' / ' _ job.total) %]</span></div>[% END %]
+      <div class="o-row"><span class="o-k">Stored cache</span><span class="o-v">[% total = 0; FOREACH u IN c.usage.pairs; total = total + u.value.bytes; END; mb(total) %]</span><span class="o-a">[% act('cache_purge_all', 'Purge all', 'o-link dan', 'Delete the cache of every site?') %]</span></div>
+    </div>
+  </section>
+
+  <section class="o-sec">
+    <div class="o-sec-h"><span class="o-dot [% data.modsec.enabled ? 'ok' : 'bad' %]"></span><h2>Security</h2><a class="o-more" href="[% base %]?page=security">Manage</a></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">ModSecurity</span><span class="o-v">[% IF data.modsec.enabled %][% badge('ok', 'On') %][% ELSIF data.modsec.available %][% badge('bad', 'Off') %][% ELSE %][% badge('off', 'Not installed') %][% END %]</span><span class="o-a"></span></div>
+      <div class="o-row"><span class="o-k">WordPress login</span><span class="o-v">[% IF s.wp_protect == 'block' %][% badge('ok', 'Blocking') %][% ELSE %][% badge('off', 'Off') %][% END %]</span><span class="o-a"></span></div>
+      <div class="o-row"><span class="o-k">Bot throttling</span><span class="o-v">[% IF s.bot_throttle %][% badge('ok', s.bot_throttle _ ' req/min') %][% ELSE %][% badge('off', 'Off') %][% END %]</span><span class="o-a"></span></div>
+      <div class="o-row"><span class="o-k">Blocked IPs</span><span class="o-v">[% blk %]</span><span class="o-a"></span></div>
+    </div>
+  </section>
+
+  <section class="o-sec">
+    <div class="o-sec-h"><span class="o-dot [% s.cgroups ? 'ok' : '' %]"></span><h2>Resource limits</h2><a class="o-more" href="[% base %]?page=limits">Manage</a></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">cgroups v2</span><span class="o-v">[% IF data.limits.available.defined && !data.limits.available %][% badge('bad', 'Unavailable') %][% ELSE %][% onoff(s.cgroups) %][% END %]</span><span class="o-a"></span></div>
+      <div class="o-row"><span class="o-k">Limited accounts</span><span class="o-v">[% lim_n %] of [% data.limits.users.size || 0 %]</span><span class="o-a"></span></div>
+    </div>
+  </section>
+
+  <section class="o-sec">
+    <div class="o-sec-h"><span class="o-dot [% data.cpp.installed ? 'ok' : '' %]"></span><h2>cPanel plugin</h2></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">LiteSpeed Cache</span><span class="o-v">[% IF data.cpp.installed %][% badge('ok', 'Installed') %][% ELSE %][% badge('off', 'Not installed') %][% END %]</span>
+        <span class="o-a">[% IF data.cpp.installed %][% act('cpplugin_uninstall', 'Uninstall', 'o-link dan', 'Remove the LiteSpeed Cache plugin from cPanel?') %][% ELSE %][% act('cpplugin_install', 'Install') %][% END %]</span></div>
+    </div>
+  </section>
+</div>
+</div>
+
+[% IF ls.warnings.size || ls.skipped.size || ls.duplicates.size || ls.errors.size %]
+<h3>Configuration warnings</h3>
+<div class="o-pre">[% FOREACH w IN ls.warnings %][% w | html %]
+[% END %][% FOREACH w IN ls.skipped %]Skipped vhost: [% w | html %]
+[% END %][% FOREACH d IN ls.duplicates %]Duplicate domain: [% d.join(' / ') | html %]
+[% END %][% FOREACH e IN ls.errors %][% e | html %]
+[% END %]</div>
+[% END %]
+
+[% CASE 'sites' %]
+[% IF data.sites.error %]<div class="o-msg bad">[% data.sites.error | html %]</div>[% END %]
+<div class="o-meta"><span>Sites <b>[% data.sites.vhosts.size || 0 %]</b></span><span>Default PHP <b>[% data.sites.default_php | html %]</b></span><span>Hostname <b>[% data.sites.hostname | html %]</b></span></div>
+<div class="o-scroll"><table class="o-t">
+  <thead><tr><th>Domain</th><th>User</th><th>PHP</th><th>Handler</th><th>SSL</th><th>ModSecurity</th><th>.htaccess</th><th>State</th></tr></thead>
+  <tbody>
+  [% FOREACH x IN data.sites.vhosts %]
+  <tr>
+    <td class="w"><b>[% x.name | html %]</b>[% IF x.aliases.size %]<span class="o-sub">[% x.aliases.join(', ') | html %]</span>[% END %]</td>
+    <td class="n">[% x.user | html %]</td><td class="n">[% x.php | html %]</td><td class="n">[% x.php_mode | upper | html %]</td>
+    <td>[% IF x.ssl %][% badge('ok', 'Yes') %][% ELSE %][% badge('off', 'No') %][% END %]</td>
+    <td>[% IF x.modsec_off %][% badge('warn', 'Off') %][% ELSE %][% badge('ok', 'On') %][% END %]</td>
+    <td>[% IF x.htaccess_issues %]<a href="[% base %]?page=htaccess">[% badge('warn', x.htaccess_issues _ ' not applied') %]</a>[% ELSE %][% badge('ok', 'OK') %][% END %]</td>
+    <td>[% IF x.suspended %][% badge('bad', 'Suspended') %][% ELSE %][% badge('ok', 'Active') %][% END %]</td>
+  </tr>
+  [% END %]
+  </tbody>
+</table>[% IF !data.sites.vhosts.size %]<div class="o-empty">No sites</div>[% END %]</div>
+[% IF data.sites.warnings.size %]<h3>Warnings</h3><div class="o-pre">[% data.sites.warnings.join("\n") | html %]</div>[% END %]
+
+[% CASE 'stats' %]
+[% sv = data.stats.server %]
+[% IF data.stats.error %]<div class="o-msg bad">[% data.stats.error | html %]</div>[% END %]
+<dl class="o-tiles">
+  [% FOREACH m IN [['REQ_PER_SEC', 'Requests/s'], ['REQ_PROCESSING', 'Processing'], ['PLAINCONN', 'HTTP connections'], ['SSLCONN', 'HTTPS connections'], ['PUB_CACHE_HITS_PER_SEC', 'Cache hits/s'], ['STATIC_HITS_PER_SEC', 'Static hits/s'], ['TOT_REQS', 'Total requests']] %]
+  <div class="o-tile"><dt>[% m.1 | html %]</dt><dd>[% sv.item(m.0) || 0 %]</dd></div>
+  [% END %]
+  <div class="o-tile"><dt>In / out KB/s</dt><dd>[% (sv.BPS_IN + sv.SSL_BPS_IN) || 0 %] / [% (sv.BPS_OUT + sv.SSL_BPS_OUT) || 0 %]</dd></div>
+</dl>
+<div class="o-scroll"><table class="o-t"><thead><tr><th>Domain</th><th>Requests/s</th><th>Processing</th><th>Total requests</th><th>Cache hits</th><th>Static hits</th></tr></thead><tbody>
+[% FOREACH v IN data.stats.vhosts %][% NEXT IF v.name == 'olscp-default' && !v.TOT_REQS %]
+<tr><td class="w">[% v.name | html %]</td><td>[% v.REQ_PER_SEC %]</td><td>[% v.REQ_PROCESSING %]</td><td>[% v.TOT_REQS %]</td><td>[% v.TOTAL_PUB_CACHE_HITS %]</td><td>[% v.TOTAL_STATIC_HITS %]</td></tr>
+[% END %]
+</tbody></table></div>
+[% IF data.stats.apps.size %]
+<h3>PHP and external applications</h3>
+<div class="o-scroll"><table class="o-t"><thead><tr><th>Application</th><th>Requests/s</th><th>Pool</th><th>In use</th><th>Idle</th><th>Queue</th><th>Total requests</th></tr></thead><tbody>
+[% FOREACH a IN data.stats.apps %]<tr><td class="w">[% a.name | html %] <span class="o-sub">[% a.type | html %]</span></td><td>[% a.REQ_PER_SEC %]</td><td>[% a.POOL_SIZE %]</td><td>[% a.INUSE_CONN %]</td><td>[% a.IDLE_CONN %]</td><td>[% a.WAITQUE_DEPTH %]</td><td>[% a.TOT_REQS %]</td></tr>[% END %]
+</tbody></table></div>
+[% END %]
+[% IF data.stats.blocked.size %]<h3>Blocked by the server</h3><div class="o-pre">[% data.stats.blocked.join("\n") | html %]</div>[% END %]
+
+[% CASE 'cache' %]
+[% c = data.cache; job = c.job; total = 0; FOREACH u IN c.usage.pairs; total = total + u.value.bytes; END %]
+[% IF c.error %]<div class="o-msg bad">[% c.error | html %]</div>[% END %]
+<div class="o-bar">
+  [% act('cache_scan', 'Scan', 'o-btn pri') %]
+  [% act('cache_scan_new', 'Discover new', 'o-btn') %]
+  [% act('cache_refresh', 'Refresh status', 'o-btn') %]
+  [% act('cache_mass_enable', 'Enable all', 'o-btn', 'Enable LSCache on every unflagged WordPress site?') %]
+  [% act('cache_mass_disable', 'Disable all', 'o-btn', 'Disable LSCache on every unflagged WordPress site?') %]
+  [% act('cache_purge_all', 'Purge all', 'o-btn dan', 'Delete the cache of every site?') %]
+</div>
+<div class="o-meta"><span>Last scan <b>[% ts(c.scanned) %]</b></span><span>Stored cache <b>[% mb(total) %]</b></span><span>WordPress sites <b>[% c.sites.size || 0 %]</b></span></div>
+[% IF job.action %]
+<div class="o-sec" style="padding:12px 16px;margin:0 0 14px">
+  <b>[% job.action | html %]</b> <span class="o-sub" style="display:inline">[% job.done || 0 %] of [% job.total || 0 %] done[% IF job.running %], running[% ELSIF job.finished %], finished [% ts(job.finished, '%H:%M:%S') %][% END %]</span>
+  <div class="o-prog"><span style="width:[% job.total ? (job.done * 100 div job.total) : (job.running ? 5 : 100) %]%"></span></div>
+  [% FOREACH f IN job.failed %]<div class="o-sub" style="color:var(--bad)">[% f.path | html %]: [% f.error | html %]</div>[% END %]
+</div>
+[% END %]
+<form method="post" action="[% base %]">
+<input type="hidden" name="action" value="cache_selected"><input type="hidden" name="page" value="cache">
+<div class="o-scroll"><table class="o-t">
+<thead><tr><th style="width:32px"><input type="checkbox" aria-label="Select all" onclick="for(const b of this.closest('table').querySelectorAll('tbody input[type=checkbox]'))b.checked=this.checked"></th><th>Installation</th><th>User</th><th>WordPress</th><th>LSCache</th><th>Plugin</th><th>Flag</th></tr></thead>
+<tbody>
+[% FOREACH x IN c.sites %]
+<tr>
+  <td><input type="checkbox" name="path_[% loop.count %]" value="[% x.path | html %]" aria-label="Select [% x.url | html %]"></td>
+  <td class="w"><b>[% x.url | html %]</b><span class="o-sub">[% x.path | html %]</span>[% IF x.error %]<span class="o-sub" style="color:var(--bad)">[% x.error | html %]</span>[% END %]</td>
+  <td class="n">[% x.user | html %]</td>
+  <td class="n">[% x.wp_version | html %]</td>
+  <td>[% SWITCH x.lscache %][% CASE 'enabled' %][% badge('ok', 'Enabled') %][% CASE 'disabled' %][% badge('off', 'Disabled') %][% CASE 'missing' %][% badge('warn', 'Not installed') %][% CASE %][% badge('bad', 'Error') %][% END %]</td>
+  <td class="n">[% x.plugin_version | html %]</td>
+  <td>[% IF x.flagged %][% badge('warn', 'Flagged') %][% END %]</td>
+</tr>
+[% END %]
+</tbody></table>[% IF !c.sites.size %]<div class="o-empty">No WordPress sites found</div>[% END %]</div>
+[% IF c.sites.size %]
+<div class="o-bar" style="margin-top:10px">
+  <button class="o-btn pri" name="op" value="enable">Enable selected</button>
+  <button class="o-btn" name="op" value="disable">Disable selected</button>
+  <button class="o-btn" name="op" value="refresh">Refresh selected</button>
+  <button class="o-btn" name="op" value="flag">Flag</button>
+  <button class="o-btn" name="op" value="unflag">Unflag</button>
+  <button class="o-btn dan" name="op" value="purge">Purge selected</button>
+</div>
+[% END %]
+</form>
+<div class="o-grid2" style="margin-top:16px">
+  <section class="o-sec" id="ver">
+    <div class="o-sec-h"><h2>LSCache plugin version</h2></div>
+    <div class="o-rows">
+      <form method="post" action="[% base %]" class="o-row">
+        <input type="hidden" name="action" value="settings"><input type="hidden" name="page" value="cache"><input type="hidden" name="only" value="lscwp_version">
+        <label class="o-k" for="lscwp">Version</label><span class="o-v"><input id="lscwp" type="text" name="lscwp_version" value="[% s.lscwp_version | html %]" style="width:100%;max-width:180px;padding:5px 8px;border:1px solid var(--rule);border-radius:6px"></span><span class="o-a"><button class="o-btn">Save</button></span>
+      </form>
+      <div class="o-row"><span class="o-k">Installations</span><span class="o-v"></span><span class="o-a">[% act('cache_force_version', 'Apply to all', '', 'Install this plugin version on every unflagged site?') %]</span></div>
+      <div class="o-row"><span class="o-k">QUIC.cloud IPs</span><span class="o-v"></span><span class="o-a"><a href="[% base %]?page=quic">View</a></span></div>
+    </div>
+  </section>
+  <section class="o-sec">
+    <div class="o-sec-h"><span class="o-dot [% data.cpp.installed ? 'ok' : '' %]"></span><h2>cPanel plugin</h2></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">LiteSpeed Cache</span><span class="o-v">[% IF data.cpp.installed %][% badge('ok', 'Installed') %][% ELSE %][% badge('off', 'Not installed') %][% END %]</span>
+        <span class="o-a">[% IF data.cpp.installed %][% act('cpplugin_uninstall', 'Uninstall', 'o-link dan', 'Remove the LiteSpeed Cache plugin from cPanel?') %][% ELSE %][% act('cpplugin_install', 'Install') %][% END %]</span></div>
+    </div>
+  </section>
+</div>
+
+[% CASE 'quic' %]
+<div class="o-bar"><a class="o-btn" href="[% base %]?page=cache">Back to cache</a>[% act('quic_refresh', 'Refresh list', 'o-btn pri') %]</div>
+[% IF data.quic.error %]<div class="o-msg bad">[% data.quic.error | html %]</div>[% END %]
+<div class="o-meta"><span>Addresses <b>[% data.quic.ips.size || 0 %]</b></span><span>Updated <b>[% ts(data.quic.time) %]</b></span></div>
+<div class="o-pre">[% data.quic.ips.join("\n") | html %]</div>
+
+[% CASE 'htaccess' %]
+[% htn = 0; FOREACH v IN data.ht.report.pairs; htn = htn + v.value.size; END %]
+<div class="o-bar">[% act('htaccess_scan', 'Rescan .htaccess files', 'o-btn pri') %][% IF !st.live_htaccess %]<a class="o-btn" href="[% base %]?page=version#build">Enable live .htaccess</a>[% END %]</div>
+<div class="o-meta">
+  <span>Mode <b>[% IF st.live_htaccess %]Live[% ELSE %]Applied on change (graceful restart)[% END %]</b></span>
+  <span>Files <b>[% data.ht.files || 0 %]</b></span><span>Last scan <b>[% ts(data.ht.scanned) %]</b></span><span>Watch <b>[% s.htaccess_watch ? 'On' : 'Off' %]</b></span>
+</div>
+[% IF data.ht.error %]<div class="o-msg bad">[% data.ht.error | html %]</div>[% END %]
+[% IF htn %]
+<h3>Directives not applied</h3>
+<div class="o-scroll"><table class="o-t"><thead><tr><th>Domain</th><th>File</th><th>Directives</th></tr></thead><tbody>
+[% FOREACH v IN data.ht.report.pairs %][% FOREACH item IN v.value %]
+<tr><td class="n">[% v.key | html %]</td><td class="w">[% item.0 | html %]</td><td class="w">[% item.1.join(', ') | html %]</td></tr>
+[% END %][% END %]
+</tbody></table></div>
+[% ELSE %]<div class="o-msg ok">All directives applied</div>[% END %]
+
+[% CASE 'apache' %]
+[% A = data.apache %]
+[% IF A.error %]<div class="o-msg warn">Apache report unavailable: [% A.error | html %]</div>
+[% ELSE %]
+<div class="o-meta"><span>Parsed files <b>[% A.parsed_files | html %]</b></span><span>Modules <b>[% A.modules.size %]</b></span><span>Virtual hosts outside cPanel <b>[% A.n_extra %]</b></span><span>Directives not applied <b>[% A.n_unsup %]</b></span></div>
+[% IF A.missing.size %]<div class="o-msg warn">Missing includes: [% A.missing.join(', ') | html %]</div>[% END %]
+[% MACRO gtable(T) BLOCK %]
+<div class="o-scroll">[% IF T.kind == 'table' %]<table class="o-t">[% has_h = 0; FOREACH col IN T.cols; IF col; has_h = 1; END; END %]
+[% IF has_h %]<thead><tr>[% FOREACH col IN T.cols %]<th>[% col | html %]</th>[% END %]</tr></thead>[% END %]
+<tbody>[% FOREACH r IN T.rows %]<tr>[% FOREACH cell IN r %]<td class="w">[% cell | html %]</td>[% END %]</tr>[% END %]</tbody></table>
+[% ELSIF T.kind == 'chips' %]<div class="o-chips">[% FOREACH ch IN T.chips %]<span class="o-chip">[% ch | html %]</span>[% END %]</div>[% ELSE %]<div class="o-empty">None</div>[% END %]</div>
+[% END %]
+<div class="o-grid2">
+  <section class="o-sec">
+    <div class="o-sec-h"><h2>Server</h2></div>
+    <div class="o-rows">[% FOREACH kv IN A.settings %]<div class="o-row"><span class="o-k">[% kv.0 | html %]</span><span class="o-v">[% kv.1 | html %]</span><span class="o-a"></span></div>[% END %]</div>
+  </section>
+  [% FOREACH sec IN A.chips %]
+  <section class="o-sec">
+    <div class="o-sec-h"><h2>[% sec.title | html %]</h2><span class="o-more o-sub">[% sec.chips.size %]</span></div>
+    <div class="o-chips">[% FOREACH ch IN sec.chips %]<span class="o-chip">[% ch | html %]</span>[% END %]</div>
+  </section>
+  [% END %]
+</div>
+[% FOREACH sec IN A.tables %]
+<h3>[% sec.title | html %] <span class="o-sub" style="display:inline;font-weight:600">[% sec.rows.size %]</span></h3>
+[% gtable(sec) %]
+[% END %]
+<h3>Virtual hosts outside cPanel</h3>
+[% gtable(A.extra_vhosts) %]
+<h3>Directives not applied</h3>
+[% gtable(A.unsupported) %]
+[% IF A.modules.size %]<h3>Apache modules <span class="o-sub" style="display:inline;font-weight:600">[% A.modules.size %]</span></h3><div class="o-sec"><div class="o-chips">[% FOREACH m IN A.modules %]<span class="o-chip">[% m | html %]</span>[% END %]</div></div>[% END %]
+[% END %]
+
+[% CASE 'security' %]
+[% m = data.modsec; htn = 0; FOREACH v IN data.ht.report.pairs; htn = htn + v.value.size; END %]
+<div class="o-grid2">
+  <section class="o-sec">
+    <div class="o-sec-h"><span class="o-dot [% m.enabled ? 'ok' : 'bad' %]"></span><h2>ModSecurity</h2></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">State</span><span class="o-v">[% IF m.enabled %][% badge('ok', 'On') %][% ELSIF m.available %][% badge('bad', 'Off') %][% ELSE %][% badge('off', 'Not installed') %][% END %]</span><span class="o-a"></span></div>
+      <div class="o-row"><span class="o-k">Rules file</span><span class="o-v o-sub">[% m.rules | html %]</span><span class="o-a"></span></div>
+      <div class="o-row"><span class="o-k">Off for</span><span class="o-v">[% IF m.off_domains.size %][% m.off_domains.join(', ') | html %][% ELSE %]No domains[% END %]</span><span class="o-a"></span></div>
+      <form method="post" action="[% base %]" class="o-row">
+        <input type="hidden" name="action" value="settings"><input type="hidden" name="page" value="security"><input type="hidden" name="only" value="modsecurity">
+        <label class="o-k" for="modsec">Setting</label>
+        <span class="o-v"><select id="modsec" name="modsecurity" style="padding:5px 8px;border:1px solid var(--rule);border-radius:6px">[% FOREACH o IN ['auto','off'] %]<option value="[% o %]"[% IF s.modsecurity == o %] selected[% END %]>[% o == 'auto' ? 'On when installed' : 'Off' %]</option>[% END %]</select></span>
+        <span class="o-a"><button class="o-btn">Save</button></span>
+      </form>
+    </div>
+  </section>
+  <section class="o-sec">
+    <div class="o-sec-h"><span class="o-dot [% htn ? 'warn' : 'ok' %]"></span><h2>.htaccess</h2></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">Not applied</span><span class="o-v">[% IF htn %][% badge('warn', htn _ ' file' _ (htn == 1 ? '' : 's')) %][% ELSE %][% badge('ok', 'None') %][% END %]</span><span class="o-a"><a href="[% base %]?page=htaccess">Report</a></span></div>
+      <div class="o-row"><span class="o-k">Bad requests</span><span class="o-v">[% IF s.block_bad_req %][% badge('ok', 'Blocked') %][% ELSE %][% badge('off', 'Allowed') %][% END %]</span><span class="o-a"></span></div>
+    </div>
+  </section>
+</div>
+<form method="post" action="[% base %]" class="o-form">
+  <input type="hidden" name="action" value="settings"><input type="hidden" name="page" value="security">
+  <input type="hidden" name="only" value="wp_protect,wp_protect_limit,wp_protect_xmlrpc,protect_ban_minutes,protect_whitelist,bot_throttle,bot_agents,block_bad_req">
+  <h3>WordPress login protection</h3>
+  <div class="o-fr"><label for="wpp">Mode</label><div class="o-ctl"><select id="wpp" name="wp_protect">[% FOREACH o IN ['off','block'] %]<option value="[% o %]"[% IF s.wp_protect == o %] selected[% END %]>[% o == 'off' ? 'Off' : 'Block IP' %]</option>[% END %]</select></div></div>
+  <div class="o-fr"><label for="wpl">Login attempts per minute per IP</label><div class="o-ctl"><input id="wpl" type="number" min="1" name="wp_protect_limit" value="[% s.wp_protect_limit | html %]"></div></div>
+  <div class="o-fr"><label for="wpx">Include xmlrpc.php</label><div class="o-ctl"><input id="wpx" type="checkbox" name="wp_protect_xmlrpc" value="1"[% IF s.wp_protect_xmlrpc %] checked[% END %]></div></div>
+  <div class="o-fr"><label for="pbm">Block duration (minutes)</label><div class="o-ctl"><input id="pbm" type="number" min="1" name="protect_ban_minutes" value="[% s.protect_ban_minutes | html %]"></div></div>
+  <div class="o-fr"><label for="pwl">Never block (IP or CIDR, comma separated)</label><div class="o-ctl"><input id="pwl" type="text" name="protect_whitelist" value="[% s.protect_whitelist | html %]"></div></div>
+  <h3 id="bots">Bot throttling</h3>
+  <div class="o-fr"><label for="bth">Requests per minute per IP (0 = off)</label><div class="o-ctl"><input id="bth" type="number" min="0" name="bot_throttle" value="[% s.bot_throttle | html %]"></div></div>
+  <div class="o-fr"><label for="bag">Bot user agents</label><div class="o-ctl"><input id="bag" type="text" name="bot_agents" value="[% s.bot_agents | html %]"></div></div>
+  <div class="o-fr"><label for="bbr">Block bad requests</label><div class="o-ctl"><input id="bbr" type="checkbox" name="block_bad_req" value="1"[% IF s.block_bad_req %] checked[% END %]></div></div>
+  <div class="o-fend"><button class="o-btn pri">Save and apply</button></div>
+</form>
+<h3>Blocked IPs</h3>
+[% IF data.blocked.blocked.size %]
+<div class="o-bar">[% act('unblock_all', 'Unblock all', 'o-btn dan', 'Unblock every IP?') %]</div>
+<div class="o-scroll"><table class="o-t"><thead><tr><th>IP</th><th>Reason</th><th>Hits</th><th>Until</th><th></th></tr></thead><tbody>
+[% FOREACH b IN data.blocked.blocked %]<tr><td class="n">[% b.ip | html %]</td><td class="w">[% b.reason | html %]</td><td>[% b.hits %]</td><td class="n">[% ts(b.until) %]</td><td class="n">[% act('unblock', 'Unblock', 'o-link', '', '<input type="hidden" name="ip" value="' _ b.ip _ '">') %]</td></tr>[% END %]
+</tbody></table></div>
+[% ELSE %]<div class="o-scroll"><div class="o-empty">None</div></div>[% END %]
+
+[% CASE 'limits' %]
+[% LM = data.limits; cfg = LM.config %]
+[% IF LM.error %]<div class="o-msg bad">[% LM.error | html %]</div>[% END %]
+[% IF LM.available.defined && !LM.available %]<div class="o-msg bad">cgroups v2 is not available on this server</div>[% END %]
+<form method="post" action="[% base %]" class="o-bar">
+  <input type="hidden" name="action" value="settings"><input type="hidden" name="page" value="limits"><input type="hidden" name="only" value="cgroups">
+  <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0"><input type="checkbox" name="cgroups" value="1"[% IF s.cgroups %] checked[% END %]> Enforce resource limits (cgroups v2)</label>
+  <button class="o-btn">Save</button>
+</form>
+[% MACRO limform(scope, name, cur) BLOCK %]
+<form method="post" action="[% base %]" class="o-lim">
+  <input type="hidden" name="action" value="limits_set"><input type="hidden" name="page" value="limits"><input type="hidden" name="scope" value="[% scope %]"><input type="hidden" name="name" value="[% name | html %]">
+  [% FOREACH k IN [['cpu','CPU %'],['mem','RAM MB'],['tasks','Tasks'],['io','IO MB/s']] %]<input type="number" min="0" name="[% k.0 %]" value="[% cur.item(k.0) | html %]" placeholder="[% k.1 %]" title="[% k.1 %]" aria-label="[% k.1 %]">[% END %]
+  <button class="o-btn">Apply</button>
+</form>
+[% END %]
+<h3>Defaults</h3>
+<div class="o-scroll"><table class="o-t"><thead><tr><th>Scope</th><th>CPU %, RAM MB, tasks, IO MB/s</th></tr></thead><tbody>
+<tr><td class="n"><b>All accounts</b></td><td>[% limform('default', '', cfg.default) %]</td></tr>
+[% FOREACH p IN LM.plans %]<tr><td class="n">Package <b>[% p | html %]</b></td><td>[% limform('package', p, cfg.packages.item(p)) %]</td></tr>[% END %]
+</tbody></table></div>
+<h3>Accounts</h3>
+<div class="o-scroll"><table class="o-t"><thead><tr><th>User</th><th>Package</th><th>Effective limit</th><th>Usage now</th><th>Account override</th></tr></thead><tbody>
+[% FOREACH u IN LM.users %]
+<tr>
+  <td class="n"><b>[% u.user | html %]</b>[% IF u.suspended %] [% badge('bad', 'Suspended') %][% END %]</td>
+  <td class="n">[% u.plan | html %]</td>
+  <td class="n">[% IF u.limits.size %][% IF u.limits.cpu %]CPU [% u.limits.cpu %]% [% END %][% IF u.limits.mem %]RAM [% u.limits.mem %] MB [% END %][% IF u.limits.tasks %]Tasks [% u.limits.tasks %] [% END %][% IF u.limits.io %]IO [% u.limits.io %] MB/s[% END %][% ELSE %]<span class="o-sub">Unlimited</span>[% END %]</td>
+  <td class="n">[% IF u.usage.size %]RAM [% u.usage.mem || 0 %] MB, tasks [% u.usage.tasks || 0 %], CPU [% u.usage.cpu_seconds || 0 %] s[% ELSE %]<span class="o-sub">Idle</span>[% END %]</td>
+  <td>[% limform('user', u.user, u.own) %]</td>
+</tr>
+[% END %]
+</tbody></table>[% IF !LM.users.size %]<div class="o-empty">No accounts</div>[% END %]</div>
+
+[% CASE 'php' %]
+[% IF data.php.error %]<div class="o-msg bad">[% data.php.error | html %]</div>[% END %]
+<div class="o-scroll"><table class="o-t"><thead><tr><th>PHP</th><th>Version</th><th>LSAPI package</th><th>PHP-FPM</th><th>Sites</th><th></th></tr></thead><tbody>
+[% FOREACH v IN data.php.versions %]
+<tr><td class="n"><b>[% v.name | html %]</b>[% IF v.default %] [% badge('ok', 'Default') %][% END %]</td><td class="n">[% v.version | html %]</td>
+<td>[% IF v.lsphp %][% badge('ok', 'Installed') %][% ELSE %][% badge('warn', 'Not installed') %][% END %]</td>
+<td class="n">[% v.fpm | html %]</td><td>[% v.sites %]</td>
+<td class="n">[% IF !v.lsphp %][% act('php_install', 'Install LSAPI', 'o-link', 'Install the LSAPI package for ' _ v.name _ '?', '<input type="hidden" name="name" value="' _ v.name _ '">') %][% END %]</td></tr>
+[% END %]
+</tbody></table>[% IF !data.php.versions.size %]<div class="o-empty">No EasyApache 4 PHP versions</div>[% END %]</div>
+
+[% CASE 'version' %]
+[% v = data.ver; B = v.build; job = B.job %]
+<div class="o-grid2">
+  <section class="o-sec" id="build">
+    <div class="o-sec-h"><span class="o-dot [% B.current == 'olscp' ? 'ok' : (job.running ? 'warn' : '') %]"></span><h2>OpenLiteSpeed build</h2></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">In use</span><span class="o-v">[% IF B.current == 'olscp' %][% badge('ok', 'olscp build') %][% ELSIF B.current == 'official' %][% badge('off', 'Official build') %][% ELSE %][% badge('off', 'Unknown') %][% END %]</span><span class="o-a"></span></div>
+      <div class="o-row"><span class="o-k">.htaccess</span><span class="o-v">[% IF st.live_htaccess %][% badge('ok', 'Live') %][% ELSE %]Applied on change (graceful restart)[% END %]</span><span class="o-a"></span></div>
+      <div class="o-row"><span class="o-k">olscp build</span><span class="o-v">[% IF B.olscp_available %][% badge('ok', 'Available') %] [% B.olscp_version | html %][% IF B.target_version && B.olscp_version && B.target_version != B.olscp_version %] [% badge('warn', 'Rebuild for ' _ B.target_version) %][% END %][% ELSE %][% badge('off', 'Not built') %][% END %]</span>
+        <span class="o-a">[% IF B.olscp_available && B.current != 'olscp' %][% act('ols_use', 'Use olscp build', '', 'Switch to the olscp build and restart OpenLiteSpeed?', '<input type="hidden" name="target" value="olscp">') %][% END %]</span></div>
+      <div class="o-row"><span class="o-k">Official build</span><span class="o-v">[% IF B.official_available.defined %][% IF B.official_available %][% badge('ok', 'Available') %][% ELSE %][% badge('off', 'Missing') %][% END %][% END %]</span>
+        <span class="o-a">[% IF B.current == 'olscp' && (!B.official_available.defined || B.official_available) %][% act('ols_use', 'Use official build', '', 'Switch to the official build and restart OpenLiteSpeed?', '<input type="hidden" name="target" value="official">') %][% END %]</span></div>
+      <div class="o-row"><span class="o-k">Build job</span>
+        <span class="o-v">[% IF job.running %][% badge('warn', 'Building') %] <span class="o-sub" style="display:inline">[% data.build_age | html %]</span>[% ELSIF job.finished && job.ok %][% badge('ok', 'Built') %] <span class="o-sub" style="display:inline">[% ts(job.finished) %]</span>[% ELSIF job.finished %][% badge('bad', 'Failed') %] <span class="o-sub" style="display:inline">[% ts(job.finished) %]</span>[% ELSE %][% badge('off', 'Not started') %][% END %]</span>
+        <span class="o-a">[% IF !job.running %][% act('ols_build', B.olscp_available ? 'Rebuild' : 'Build', 'o-btn pri', 'Compile the olscp build of OpenLiteSpeed now? This installs build tools and takes about 10 minutes.') %][% END %]</span></div>
+    </div>
+    [% IF job.log.size %]<div style="padding:0 16px 14px"><div class="o-pre" style="max-height:260px">[% job.log.join("\n") | html %]</div></div>[% END %]
+  </section>
+
+  <section class="o-sec">
+    <div class="o-sec-h"><h2>OpenLiteSpeed version</h2></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">Installed</span><span class="o-v"><b>[% v.current || ols.version | html %]</b></span><span class="o-a"></span></div>
+      [% IF v.error %]
+      <div class="o-row"><span class="o-k">Repository</span><span class="o-v">[% badge('warn', 'Unreachable') %] <span class="o-sub">[% v.error | html %]</span></span><span class="o-a"></span></div>
+      [% ELSE %]
+      [% FOREACH x IN v.available.reverse %]
+      <div class="o-row"><span class="o-k">[% loop.first ? 'Repository' : '' %]</span><span class="o-v">[% x | html %]</span>
+        <span class="o-a">[% IF x == v.current %][% badge('ok', 'Installed') %][% ELSE %][% act('ols_upgrade', 'Install', '', 'Install OpenLiteSpeed ' _ x _ '?', '<input type="hidden" name="version" value="' _ x _ '">') %][% END %]</span></div>
+      [% END %]
+      [% END %]
+    </div>
+  </section>
+</div>
+
+[% CASE 'settings' %]
+[% IF s.error %]<div class="o-msg bad">[% s.error | html %]</div>[% END %]
+[% skeys = []; FOREACH g IN GROUPS; FOREACH k IN g.1; skeys.push(k); END; END %]
+<form method="post" action="[% base %]" class="o-form">
+  <input type="hidden" name="action" value="settings"><input type="hidden" name="page" value="settings"><input type="hidden" name="only" value="[% skeys.join(',') %]">
+  [% FOREACH g IN GROUPS %]
+  <h3[% IF g.0 == 'WebAdmin' %] id="webadmin"[% END %]>[% g.0 | html %]</h3>
+    [% FOREACH k IN g.1 %]
+    <div class="o-fr"><label for="s_[% k %]">[% L.item(k) | html %]</label><div class="o-ctl">
+      [% IF SELECTS.item(k) %]<select id="s_[% k %]" name="[% k %]">[% FOREACH o IN SELECTS.item(k) %]<option value="[% o %]"[% IF s.item(k) == o %] selected[% END %]>[% o == 'fpm' ? 'PHP-FPM' : (o == 'lsapi' ? 'LSAPI' : o.ucfirst) %]</option>[% END %]</select>
+        [% IF k == 'autoindex' && s.php_mode != 'lsapi' %][% badge('warn', 'Off for PHP-FPM sites') %][% END %]
+      [% ELSIF BOOLS.item(k) %]<input id="s_[% k %]" type="checkbox" name="[% k %]" value="1"[% IF s.item(k) %] checked[% END %]>
+      [% ELSIF k == 'max_req_body' || k == 'mem_limit' || k == 'webadmin_listen' || k == 'lscwp_version' %]<input id="s_[% k %]" type="text" name="[% k %]" value="[% s.item(k) | html %]">
+      [% ELSE %]<input id="s_[% k %]" type="number" min="0" name="[% k %]" value="[% s.item(k) | html %]">[% END %]
+    </div></div>
+    [% END %]
+  [% END %]
+  <div class="o-fend"><button class="o-btn pri">Save and apply</button></div>
+</form>
+
+[% CASE 'logs' %]
+[% IF data.logs.error %]<div class="o-msg bad">[% data.logs.error | html %]</div>[% END %]
+<h3 style="margin-top:0">olscp <span class="o-sub" style="display:inline;font-weight:600">newest first</span></h3>
+<div class="o-pre">[% data.logs.olscp.reverse.join("\n") | html %]</div>
+<h3>OpenLiteSpeed <span class="o-sub" style="display:inline;font-weight:600">newest first</span></h3>
+<div class="o-pre">[% data.logs.server.reverse.join("\n") | html %]</div>
+
+[% END %]
+</div>
+[% END #wrapper -%]

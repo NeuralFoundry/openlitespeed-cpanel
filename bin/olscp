@@ -1,0 +1,8 @@
+#!/usr/bin/python3 -Is
+import sys
+
+sys.path.insert(0, '/usr/local/olscp/lib')
+
+from olscp.cli import main
+
+sys.exit(main())

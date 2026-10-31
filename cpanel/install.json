@@ -1,0 +1,13 @@
+[
+    {
+        "id": "olscp_cache",
+        "name": "LiteSpeed Cache",
+        "type": "link",
+        "uri": "olscp_cache/index.live.pl",
+        "group_id": "software",
+        "order": 10,
+        "icon": "olscp_cache.png",
+        "featuremanager": true,
+        "searchtext": "litespeed cache lscache wordpress openlitespeed"
+    }
+]

@@ -1,0 +1,35 @@
+name: OpenLiteSpeed build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        el: [8, 9]
+    runs-on: ubuntu-latest
+    container: almalinux:${{ matrix.el }}
+    steps:
+      - run: dnf -y -q install git tar
+      - uses: actions/checkout@v4
+      - run: OLSCP_BUILD_DIR=$PWD/.work bash build/build-ols.sh all
+      - run: |
+          f=openlitespeed-$(sed -n 's/^OLS_TAG=v//p' build/build-ols.sh)-olscp-el${{ matrix.el }}-x86_64
+          mv .work/dist/openlitespeed "$f"
+          sha256sum "$f" > "$f.sha256"
+          echo "BIN=$f" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN }}
+          path: ${{ env.BIN }}*
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.BIN }}*
