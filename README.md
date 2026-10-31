@@ -1,5 +1,7 @@
 # OpenLiteSpeed for cPanel and WHM
 
+Website: [openlitespeed.dev](https://openlitespeed.dev/)
+
 **olscp** runs [OpenLiteSpeed](https://openlitespeed.org) on cPanel/WHM servers as a drop-in replacement for Apache. It reads the existing Apache configuration and cPanel account data, generates the OpenLiteSpeed configuration, keeps it in sync automatically, and adds a WHM plugin and a cPanel plugin to manage everything. Free and open source under GPL-3.0.
 
 ![olscp WHM plugin dashboard](docs/dashboard.png)
