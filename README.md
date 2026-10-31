@@ -83,6 +83,10 @@ bash uninstall.sh --purge  # also delete /usr/local/olscp, settings, cache and l
 - Directory listing is not available for sites on PHP-FPM, because cPanel FPM pools restrict `doc_root`. It works with LSAPI.
 - Clients without SNI on dedicated IPs receive the server certificate.
 
+## Contributing
+
+Bug reports and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems privately as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 GPL-3.0, see [LICENSE](LICENSE). OpenLiteSpeed is developed by LiteSpeed Technologies and licensed under GPL-3.0; the patch in `build/patches/` is distributed under the same license. This project is not affiliated with or endorsed by LiteSpeed Technologies or cPanel, L.L.C. LiteSpeed, OpenLiteSpeed, LSCache, cPanel and WHM are trademarks of their respective owners.

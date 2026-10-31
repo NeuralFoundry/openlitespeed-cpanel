@@ -1,0 +1,74 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems must not be reported here. Use [private reporting](https://github.com/NeuralFoundry/openlitespeed-cpanel/security/advisories/new) instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened
+      description: Describe the problem and any error message you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run olscp enable
+        2. Open https://example.com/blog/
+        3. The page returns 404
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+  - type: input
+    id: version
+    attributes:
+      label: olscp version
+      description: Output of `olscp version`
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: AlmaLinux 9.4
+    validations:
+      required: true
+  - type: input
+    id: cpanel
+    attributes:
+      label: cPanel version
+      placeholder: "11.130.0.15"
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: OpenLiteSpeed binary
+      options:
+        - Official
+        - olscp build (live .htaccess)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of olscp status
+      description: Remove hostnames and IP addresses you do not want to share.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: Relevant lines from `olscp logs --lines 50`, and the `.htaccess` file if the problem is about rewrite rules.
+      render: shell
