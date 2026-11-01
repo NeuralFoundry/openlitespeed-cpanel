@@ -1,6 +1,6 @@
 # OpenLiteSpeed for cPanel and WHM
 
-Website: [openlitespeed.dev](https://openlitespeed.dev/)
+Website: [openlitespeed.dev/cpanel](https://openlitespeed.dev/cpanel/)
 
 **olscp** runs [OpenLiteSpeed](https://openlitespeed.org) on cPanel/WHM servers as a drop-in replacement for Apache. It reads the existing Apache configuration and cPanel account data, generates the OpenLiteSpeed configuration, keeps it in sync automatically, and adds a WHM plugin and a cPanel plugin to manage everything. Free and open source under GPL-3.0.
 
@@ -90,3 +90,5 @@ Bug reports and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md
 ## License
 
 GPL-3.0, see [LICENSE](LICENSE). OpenLiteSpeed is developed by LiteSpeed Technologies and licensed under GPL-3.0; the patch in `build/patches/` is distributed under the same license. This project is not affiliated with or endorsed by LiteSpeed Technologies or cPanel, L.L.C. LiteSpeed, OpenLiteSpeed, LSCache, cPanel and WHM are trademarks of their respective owners.
+
+Also by the same author: [OpenLiteSpeed for Windows](https://github.com/NeuralFoundry/openlitespeed-windows), a native Windows build of OpenLiteSpeed.

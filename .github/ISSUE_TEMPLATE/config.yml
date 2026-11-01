@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/NeuralFoundry/openlitespeed-cpanel/security/advisories/new
     about: Report security problems privately, not as a public issue.
   - name: Website
-    url: https://openlitespeed.dev/
+    url: https://openlitespeed.dev/cpanel/
     about: Overview, installation guide and FAQ.
