@@ -52,6 +52,10 @@ if [ -n "${OLSCP_OLS_BIN:-}" ]; then
     grep -q OLSCP_HT_NOTIFY "$OLSCP_OLS_BIN" || die "$OLSCP_OLS_BIN is not an olscp OpenLiteSpeed build"
     install -m 755 "$OLSCP_OLS_BIN" "$PREFIX/ws/bin/openlitespeed.olscp"
     LIVE_BUILD=1
+elif [ "${OLSCP_FETCH_OLS:-0}" = 1 ]; then
+    step "openlitespeed olscp build (prebuilt)"
+    "$PREFIX/bin/olscp" ols fetch >/dev/null || die "download failed, compile instead with OLSCP_BUILD_OLS=1"
+    LIVE_BUILD=1
 elif [ "${OLSCP_BUILD_OLS:-0}" = 1 ]; then
     step "openlitespeed olscp build (compiling, this takes a while)"
     "$PREFIX/bin/olscp" ols build-run >/dev/null || die "build failed, see /var/log/olscp-ols-build.log"

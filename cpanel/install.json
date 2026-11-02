@@ -9,5 +9,16 @@
         "icon": "olscp_cache.png",
         "featuremanager": true,
         "searchtext": "litespeed cache lscache wordpress openlitespeed"
+    },
+    {
+        "id": "olscp_apps",
+        "name": "Application Status",
+        "type": "link",
+        "uri": "olscp_apps/index.live.pl",
+        "group_id": "software",
+        "order": 11,
+        "icon": "olscp_apps.png",
+        "featuremanager": true,
+        "searchtext": "application status restart log node nodejs python ruby passenger openlitespeed"
     }
 ]

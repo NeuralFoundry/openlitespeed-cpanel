@@ -3,7 +3,7 @@ import shutil
 import socket
 import time
 
-from . import const, olsbuild, server, sync, util
+from . import cloudlinux, const, olsbuild, server, sync, util
 
 RESTARTSRV = '/usr/local/cpanel/scripts/restartsrv_httpd'
 WRAPPER_MARK = b'olscp-httpd-wrapper'
@@ -218,4 +218,5 @@ def status():
         'switched_at': st.get('switched_at'),
         'live_htaccess': olsbuild.live() and info.get('running', False),
         'ols_build': olsbuild.current(),
+        'cloudlinux': cloudlinux.status(util.load_settings()),
     }

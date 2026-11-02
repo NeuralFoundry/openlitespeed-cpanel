@@ -51,6 +51,7 @@ my %SETTINGS = (
     bot_agents             => 'agents',
     block_bad_req          => 'bool',
     cgroups                => 'bool',
+    cloudlinux             => 'clmode',
 );
 
 my %PAGES = map { $_ => 1 } qw(home sites apps stats cache quic htaccess apache security limits php version settings logs);
@@ -103,6 +104,7 @@ sub valid_setting {
     return $v =~ /^(?:auto|fpm|lsapi)$/                     if $type eq 'phpmode';
     return $v =~ /^(?:auto|off)$/                           if $type eq 'onoff';
     return $v =~ /^(?:auto|on|off)$/                        if $type eq 'tristate';
+    return $v =~ /^(?:auto|off|lve|cagefs)$/                if $type eq 'clmode';
     return $v =~ /^(?:latest|\d+(?:\.\d+){1,3})$/           if $type eq 'lscwpver';
     return $v =~ /^(?:off|block)$/                          if $type eq 'wpmode';
     return $v =~ /^[0-9a-fA-F:.\/, ]{0,2000}$/              if $type eq 'iplist';
@@ -249,6 +251,9 @@ if ( $method eq 'POST' && $action ) {
         cpplugin_install   => [ 'cpanel-plugin', 'install' ],
         cpplugin_uninstall => [ 'cpanel-plugin', 'uninstall' ],
         ols_build          => [ 'ols', 'build' ],
+        ols_fetch          => [ 'ols', 'fetch', '--use' ],
+        update_start       => [ 'update', 'start' ],
+        update_check       => [ 'update', 'check' ],
     );
     if ( $simple{$action} ) {
         $res = olscp( @{ $simple{$action} } );
@@ -417,7 +422,10 @@ elsif ( $page eq 'php' ) {
 }
 elsif ( $page eq 'version' ) {
     my $ver = olscp( 'ols', 'versions' );
-    $data{'ver'} = $ver;
+    $data{'ver'}    = $ver;
+    $data{'update'} = olscp('update');
+    my $ujob = ref $data{'update'} eq 'HASH' ? $data{'update'}{'job'} : undef;
+    $data{'refresh'} = 5 if ref $ujob eq 'HASH' && $ujob->{'running'};
     my $job = ref $ver eq 'HASH' && ref $ver->{'build'} eq 'HASH' ? $ver->{'build'}{'job'} : undef;
     if ( ref $job eq 'HASH' ) {
         $data{'refresh'}   = 10 if $job->{'running'};

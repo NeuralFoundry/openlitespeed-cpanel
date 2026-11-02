@@ -1,9 +1,11 @@
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import time
+import zlib
 
 from . import const, server, util
 
@@ -17,6 +19,9 @@ LOG = '/var/log/olscp-ols-build.log'
 CACHE = const.STATE + '/ols-binary.json'
 UNIT = 'olscp-ols-build'
 MARKER = b'OLSCP_HT_NOTIFY'
+PREBUILT = const.BASE + '/build/prebuilt.txt'
+FETCHED = const.STATE + '/ols-prebuilt.json'
+MAX_BINARY = 96 << 20
 
 
 def _sig(path):
@@ -89,6 +94,7 @@ def job():
 
 
 def info():
+    item = prebuilt()
     return {
         'current': current(),
         'olscp_available': os.path.isfile(PATCHED),
@@ -96,8 +102,85 @@ def info():
         'official_available': os.path.isfile(OFFICIAL) or current() == 'official',
         'installed_version': server.version(),
         'target_version': target_version(),
+        'prebuilt': item,
+        'prebuilt_current': bool(item) and os.path.isfile(PATCHED) and sha256(PATCHED) == item['sha256'],
         'job': job(),
     }
+
+
+def platform():
+    text = util.read_text('/etc/os-release', '') or ''
+    m = re.search(r'^VERSION_ID="?(\d+)', text, re.M)
+    return ('el' + m.group(1) if m else ''), os.uname().machine
+
+
+def prebuilt(version=None):
+    el, arch = platform()
+    version = version or server.version()
+    for line in (util.read_text(PREBUILT, '') or '').splitlines():
+        parts = line.split()
+        if len(parts) == 5 and parts[:3] == [el, arch, version] and re.match(r'^[0-9a-f]{64}$', parts[3]) \
+                and parts[4].startswith('https://github.com/'):
+            return {'platform': el, 'arch': arch, 'version': version, 'sha256': parts[3], 'url': parts[4]}
+    return None
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def fetch():
+    from . import update
+    item = prebuilt()
+    if not item:
+        el, arch = platform()
+        raise RuntimeError('no prebuilt olscp build for OpenLiteSpeed %s on %s %s, compile it instead'
+                           % (server.version(), el, arch))
+    blob = update.get(item['url'], 48 << 20, 120)
+    if blob[:2] == b'\x1f\x8b':
+        z = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        data = z.decompress(blob, MAX_BINARY + 1)
+        if len(data) > MAX_BINARY or z.unconsumed_tail:
+            raise RuntimeError('prebuilt binary is too large')
+    else:
+        data = blob
+    if len(data) > MAX_BINARY:
+        raise RuntimeError('prebuilt binary is too large')
+    if hashlib.sha256(data).hexdigest() != item['sha256']:
+        raise RuntimeError('prebuilt binary checksum mismatch')
+    tmp = PATCHED + '.new'
+    with open(tmp, 'wb') as f:
+        f.write(data)
+    os.chmod(tmp, 0o755)
+    ver = binary_version(tmp)
+    if ver != item['version'] or not is_patched(tmp):
+        os.unlink(tmp)
+        raise RuntimeError('prebuilt binary does not run here (reports %r)' % ver)
+    os.rename(tmp, PATCHED)
+    util.write_atomic(FETCHED, json.dumps({'sha256': item['sha256'], 'time': int(time.time())}), 0o600)
+    util.log('downloaded prebuilt olscp build %s for %s' % (item['version'], item['platform']))
+    return {'fetched': True, 'version': ver, 'sha256': item['sha256']}
+
+
+def refresh():
+    item = prebuilt()
+    if current() != 'olscp' or not item or not os.path.isfile(PATCHED):
+        return {'changed': False}
+    try:
+        with open(FETCHED) as f:
+            mine = json.load(f).get('sha256')
+    except (OSError, ValueError):
+        mine = None
+    have = sha256(PATCHED)
+    if have == item['sha256'] or have != mine:
+        return {'changed': False}
+    res = fetch()
+    res.update(use('olscp'))
+    return res
 
 
 def start_build():

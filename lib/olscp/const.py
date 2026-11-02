@@ -92,6 +92,7 @@ DEFAULT_SETTINGS = {
     'bot_agents': 'GPTBot|ClaudeBot|anthropic-ai|CCBot|Bytespider|Amazonbot|PerplexityBot|meta-externalagent|Google-Extended|Applebot-Extended|ImagesiftBot|PetalBot|DataForSeoBot|AhrefsBot|SemrushBot|MJ12bot|DotBot|BLEXBot',
     'block_bad_req': True,
     'cgroups': False,
+    'cloudlinux': 'off',
     'htaccess_watch': True,
     'cache_module': True,
     'max_conns': 10000,
@@ -99,6 +100,9 @@ DEFAULT_SETTINGS = {
     'conn_timeout': 300,
     'max_req_body': '2047M',
 }
+
+
+SETTING_CHOICES = {'cloudlinux': ('auto', 'off', 'lve', 'cagefs')}
 
 
 def ensure_dirs():

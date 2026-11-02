@@ -17,7 +17,7 @@ JOBS=$(nproc)
 say() { echo "[$(date +%H:%M:%S)] $*"; }
 
 deps() {
-    dnf -y -q install gcc gcc-c++ make cmake git patch libtool autoconf automake golang \
+    dnf -y -q install gcc gcc-c++ make cmake git patch libtool autoconf automake golang libcap-devel \
         perl wget which >/dev/null
 }
 

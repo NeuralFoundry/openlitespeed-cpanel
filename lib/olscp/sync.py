@@ -5,7 +5,7 @@ import pwd
 import shutil
 import time
 
-from . import const, cpanel, htaccess, olsbuild, render, server, util
+from . import cloudlinux, const, cpanel, htaccess, olsbuild, render, server, util
 
 
 def active():
@@ -142,9 +142,15 @@ def sync(restart=False, reason='manual', force_restart=False, overrides=None):
             prepare_modsec(settings)
         except OSError as e:
             util.log('prepare failed: %s' % e, 'WARN')
+        lve_mode = cloudlinux.mode(settings)
+        old_lve = read_status().get('lve_mode', 'off')
+        try:
+            cloudlinux.sync_cagefs(lve_mode == 'cagefs')
+        except OSError as e:
+            util.log('CageFS configuration failed: %s' % e, 'WARN')
         try:
             from . import limits
-            limits.apply(enabled=bool(settings.get('cgroups')))
+            limits.apply(enabled=bool(settings.get('cgroups')) and lve_mode == 'off')
         except Exception as e:
             util.log('limits apply failed: %s' % e, 'WARN')
         did_restart = False
@@ -169,6 +175,9 @@ def sync(restart=False, reason='manual', force_restart=False, overrides=None):
                     server.systemd_reattach()
                 ok = False
             errors = server.recent_errors(t0)
+        if lve_mode != old_lve and did_restart and ok and active():
+            util.log('CloudLinux mode %s -> %s, restarted %d PHP and application processes' % (
+                old_lve, lve_mode, cloudlinux.stop_workers()))
         if moved and settings.get('cache_module', True):
             from . import wpcache
             wpcache.purge(moved)
@@ -200,8 +209,11 @@ def sync(restart=False, reason='manual', force_restart=False, overrides=None):
             'live_htaccess': live,
             'apache_vhosts': len([v for v in state.vhosts if v.source == 'apache']),
         }
-        write_status({'last_sync': result, 'htaccess_report': info['htaccess'], 'apache_report': apache_report(state),
-                      'apps': info['apps']})
+        status = {'last_sync': result, 'htaccess_report': info['htaccess'], 'apache_report': apache_report(state),
+                  'apps': info['apps']}
+        if did_restart and ok or not active():
+            status['lve_mode'] = lve_mode
+        write_status(status)
         util.log('sync reason=%s changed=%d removed=%d restart=%s ok=%s' % (reason, len(changed), len(removed), did_restart, ok))
         return result
 

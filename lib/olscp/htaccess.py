@@ -26,6 +26,12 @@ ENV_ATTRS = {
     'request_protocol': 'SERVER_PROTOCOL', 'server_addr': 'SERVER_ADDR', 'host': 'HTTP_HOST',
     'query_string': 'QUERY_STRING',
 }
+CONTROL = re.compile(r'[\x00-\x1f\x7f]')
+FILES_ONLY = {'header', 'expiresactive', 'expiresdefault', 'expiresbytype', 'fileetag'}
+EXT_LIST = re.compile(r'^\\\.(?:\((?:\?:)?([A-Za-z0-9_-]+(?:\|[A-Za-z0-9_-]+)*)\)|([A-Za-z0-9_-]+))\$$')
+EXT_GLOB = re.compile(r'^\*\.([A-Za-z0-9_-]+)$')
+PHP_HANDLER = re.compile(r'^application/x-httpd-(ea-php\d{2,3})(?:___lsphp)?$', re.I)
+PHP_SUFFIXES = ('php', 'php8', 'php7', 'php5', 'phtml')
 IGNORED = {
     'addhandler', 'sethandler', 'removehandler', 'addcharset',
     'fileetag', 'serversignature',
@@ -55,17 +61,36 @@ class Scope(object):
         self.indexes = None
         self.mime = []
         self.pre_rules = []
+        self.extra = False
 
     def has_policy(self):
         return bool(self.access or self.auth_require or self.headers or self.expires_active
                     or self.expires_by_type or self.expires_default or self.index or self.indexes is not None
                     or self.mime or self.pre_rules)
 
+    def headers_only(self):
+        return not (self.access or self.auth_require or self.index or self.indexes is not None or self.mime
+                    or self.pre_rules or self.extra) and bool(self.headers or self.expires_by_type or self.expires_default)
+
 
 def with_headers(scope, headers):
     s = Scope()
     s.__dict__.update(scope.__dict__)
     s.headers = list(headers) + [h for h in scope.headers if h not in headers]
+    return s
+
+
+def with_files(scope, fs):
+    s = Scope()
+    s.__dict__.update(scope.__dict__)
+    s.headers = list(scope.headers) + list(fs.headers)
+    if fs.expires_active is not None:
+        s.expires_active = fs.expires_active
+    elif fs.expires_by_type or fs.expires_default:
+        s.expires_active = True if s.expires_active is None else s.expires_active
+    if fs.expires_default:
+        s.expires_default = fs.expires_default
+    s.expires_by_type = dict(scope.expires_by_type, **fs.expires_by_type)
     return s
 
 
@@ -131,6 +156,8 @@ class Ht(object):
         self.dir = os.path.dirname(path)
         self.scope = Scope()
         self.files = []
+        self.file_headers = []
+        self.handler = None
         self.locations = []
         self.directories = []
         self.rewrite = []
@@ -378,6 +405,8 @@ class Parser(object):
                     self._finish(fs, fl, fr)
                     if fs.access or fs.auth_require:
                         self.ht.files.append((pat, regex, fs))
+                    elif fs.headers_only() and not self.include:
+                        self.ht.file_headers.append((pat, regex, fs))
                     elif fs.has_policy():
                         self.ht.unsupported.append('<%s> without access rules' % m.group(2))
                 elif tag in ('location', 'locationmatch') and top and self.include:
@@ -455,6 +484,8 @@ class Parser(object):
         name = parts[0].lower()
         rest = parts[1] if len(parts) > 1 else ''
         ht = self.ht
+        if name not in FILES_ONLY:
+            scope.extra = True
         if name in REWRITE:
             if top:
                 ht.rewrite.append(line)
@@ -498,6 +529,13 @@ class Parser(object):
                 scope.pre_rules.append('RewriteRule .* - [E=%s:%s]' % (args[0], args[1] if len(args) > 1 else ''))
             elif not ht.app['values']:
                 ht.unsupported.append('SetEnv')
+        elif name == 'addhandler':
+            args = split_args(rest)
+            m = PHP_HANDLER.match(args[0]) if args else None
+            if m and top and not self.include:
+                sufs = [a.lstrip('.').lower() for a in args[1:] if re.match(r'^\.?[A-Za-z0-9]{1,16}$', a)]
+                if sufs:
+                    ht.handler = (m.group(1).lower(), sufs)
         elif name == 'sslrequiressl':
             scope.pre_rules.extend(['RewriteCond %{HTTPS} !on', 'RewriteRule .* - [F]'])
         elif name == 'addtype':
@@ -619,6 +657,15 @@ def scan_roots(docroots):
     return out
 
 
+def safe_path(p):
+    return not CONTROL.search(p)
+
+
+def ext_list(pat, is_regex):
+    m = (EXT_LIST if is_regex else EXT_GLOB).match(pat)
+    return [x for x in m.groups() if x][0].split('|') if m else None
+
+
 def scan(docroots, limit=MAX_DIRS):
     found = []
     seen = 0
@@ -636,6 +683,8 @@ def scan(docroots, limit=MAX_DIRS):
                 continue
             with it:
                 for e in it:
+                    if not safe_path(e.name):
+                        continue
                     try:
                         if e.name == '.htaccess' and e.is_file(follow_symlinks=False):
                             found.append(e.path)
@@ -661,7 +710,7 @@ def load():
 def add_files(paths):
     data = load()
     files = set(data.get('files', []))
-    new = [p for p in paths if p not in files]
+    new = [p for p in paths if p not in files and safe_path(p)]
     if new:
         util.write_atomic(STATE, json.dumps({'time': data.get('time', 0), 'files': sorted(files | set(new))}), 0o600)
     return new
@@ -718,7 +767,7 @@ def glob_to_regex(g):
     return out
 
 
-def files_uri_regex(prefix, pat, is_regex):
+def files_uri_regex(prefix, pat, is_regex, exclude=None):
     if is_regex:
         core = pat
         lead = ''
@@ -730,7 +779,8 @@ def files_uri_regex(prefix, pat, is_regex):
         base = lead + '(?:' + core + ')' + tail
     else:
         base = '(?:' + glob_to_regex(pat) + ')$'
-    return 'exp:^' + re.escape(prefix).replace('\\/', '/') + '(?:.*/)?' + base
+    skip = '(?!%s)' % '|'.join(re.escape(e).replace('\\/', '/') for e in exclude) if exclude else ''
+    return 'exp:^' + re.escape(prefix).replace('\\/', '/') + skip + '(?:.*/)?' + base
 
 
 class VhostHt(object):
@@ -750,6 +800,7 @@ class VhostHt(object):
         self.app_specs = []
         self.apps = []
         self.app_issues = []
+        self.php_versions = set()
 
 
 def app_spec(path, uri, data, directory=None, nested=False):
@@ -823,13 +874,20 @@ def build_includes(res, include_dirs, docroot, texts=None):
         res.include_rules += len(ht.files) + len(ht.locations) + len(ht.rewrite) + len(sc.headers)
 
 
-def build(docroot, files, cache=None, include_dirs=None, include_texts=None):
+def handler_differs(ht, php):
+    if not ht.handler:
+        return False
+    ver, sufs = ht.handler
+    return ver != php or any(x not in PHP_SUFFIXES for x in sufs)
+
+
+def build(docroot, files, cache=None, include_dirs=None, include_texts=None, php=None):
     cache = cache if cache is not None else {}
     res = VhostHt()
     if include_dirs or include_texts:
         build_includes(res, include_dirs, docroot, include_texts)
     root = os.path.realpath(docroot).rstrip('/')
-    mine = sorted(f for f in files if f == root + '/.htaccess' or f.startswith(root + '/'))
+    mine = sorted(f for f in files if (f == root + '/.htaccess' or f.startswith(root + '/')) and safe_path(f))
     parsed = {}
     for f in mine:
         try:
@@ -866,7 +924,8 @@ def build(docroot, files, cache=None, include_dirs=None, include_texts=None):
     def uri_of(d):
         return '/' if d == root else '/' + os.path.relpath(d, root).replace(os.sep, '/') + '/'
 
-    policy_dirs = {d for d, ht in parsed.items() if ht.scope.has_policy()}
+    policy_dirs = {d for d, ht in parsed.items()
+                   if ht.scope.has_policy() or ht.file_headers or handler_differs(ht, php)}
     need = {d for d, ht in parsed.items() if ht.app['values']}
     for d in sorted(need):
         res.app_specs.append(app_spec(parsed[d].path, uri_of(d), parsed[d].app, d, d != root))
@@ -878,7 +937,17 @@ def build(docroot, files, cache=None, include_dirs=None, include_texts=None):
         eff = merged_scope([h.scope for h in ch])
         ht = parsed[d]
         ctx = {'uri': uri_of(d), 'location': d + '/', 'scope': eff, 'rewrite': list(ht.rewrite), 'php': list(ht.php),
-               'mime': list(eff.mime), 'pre_rules': list(eff.pre_rules)}
+               'mime': list(eff.mime), 'pre_rules': list(eff.pre_rules),
+               'file_headers': [fh + (level,) for level, h in enumerate(ch) for fh in h.file_headers]}
+        for h in reversed(ch):
+            if h.rewrite:
+                ctx['rewrite_from'] = (uri_of(h.dir), list(h.rewrite))
+                break
+        handlers = [h for h in reversed(ch) if h.handler]
+        if handlers and any(handler_differs(h, php) for h in handlers):
+            ctx['php_handler'] = handlers[0].handler
+            if handlers[0].handler[0] != php:
+                res.php_versions.add(handlers[0].handler[0])
         if eff.auth_require:
             rn = realm_name(eff.auth_user_file, eff.auth_group_file)
             res.realms[rn] = (eff.auth_user_file, eff.auth_group_file)

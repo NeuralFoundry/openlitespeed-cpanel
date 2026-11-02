@@ -154,7 +154,7 @@ class Watcher(object):
 
     def notified(self, data):
         path = data.decode('utf-8', 'replace').strip()
-        if not path.endswith('/.htaccess') or path in self.known or '\0' in path:
+        if not path.endswith('/.htaccess') or path in self.known or not htaccess.safe_path(path):
             return
         real = os.path.realpath(path)
         if not any(real == r + '/.htaccess' or real.startswith(r + '/') for r in self.roots):

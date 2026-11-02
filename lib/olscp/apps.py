@@ -7,6 +7,7 @@ import signal
 from . import const, util
 
 LSWSGI = const.BASE + '/libexec/lswsgi.py'
+LSRACK = const.BASE + '/libexec/lsrack.rb'
 STARTERS = const.OLS_ROOT + '/fcgi-bin'
 STARTUP = {'node': 'app.js', 'wsgi': 'passenger_wsgi.py', 'rack': 'config.ru'}
 ENV_MODES = {'development': 0, 'production': 1, 'staging': 2}
@@ -30,10 +31,15 @@ BINARY_NAME = {'node': re.compile(r'^(node|nodejs)[0-9.]*$'), 'python': re.compi
                'ruby': re.compile(r'^ruby[0-9.]*$')}
 NODE_MAX_CONNS = 100
 WSGI_MAX_CONNS = 10
+RACK_MAX_CONNS = 10
 
 
 def is_directive(name):
     return name in KEYS or name.startswith('passenger')
+
+
+def server_of(kind):
+    return {'wsgi': LSWSGI, 'rack': LSRACK}.get(kind)
 
 
 def norm_uri(u):
@@ -150,8 +156,6 @@ def resolve(spec, home, defaults=None):
         return None, '%s: application type %s is not supported' % (where, raw)
     if not kind:
         return None, '%s: application type could not be detected, set PassengerAppType' % where
-    if kind == 'rack':
-        return None, '%s: Ruby applications are not supported yet' % where
     startup = v.get('startup') or STARTUP[kind]
     if startup.startswith('/'):
         if not inside(os.path.realpath(startup), real):
@@ -162,9 +166,8 @@ def resolve(spec, home, defaults=None):
     full = os.path.realpath(os.path.join(real, startup))
     if not inside(full, real) or not os.path.isfile(full):
         return None, '%s: startup file %s not found in %s' % (where, startup, real)
-    if kind == 'wsgi':
-        starter = LSWSGI
-    else:
+    starter = server_of(kind)
+    if not starter:
         starter = os.path.join(STARTERS, 'lsnodesm.js' if startup.endswith('.mjs') else 'lsnode.js')
     if not os.path.isfile(starter):
         return None, '%s: %s is missing' % (where, starter)
@@ -183,7 +186,7 @@ def resolve(spec, home, defaults=None):
             env.append('%s=%s' % (name, value))
     env.append('PASSENGER_APP_ENV=%s' % mode)
     env.append('LS_STDERR_LOG=%s' % log_file(v.get('log'), real, home_real))
-    if kind == 'wsgi':
+    if server_of(kind):
         env.append('OLSCP_APP_URI=%s' % uri)
     return {
         'uri': uri, 'root': real + '/', 'type': kind, 'startup': startup, 'binary': binary, 'mode': mode,
@@ -246,9 +249,9 @@ def static_dirs(app, docroot):
 def context(c, app):
     c.kv('type', 'appserver')
     c.kv('location', app['root'])
-    if app['type'] == 'wsgi':
-        c.kv('binPath', '%s %s' % (app['binary'], LSWSGI))
-        c.kv('maxConns', WSGI_MAX_CONNS)
+    if server_of(app['type']):
+        c.kv('binPath', '%s %s' % (app['binary'], server_of(app['type'])))
+        c.kv('maxConns', RACK_MAX_CONNS if app['type'] == 'rack' else WSGI_MAX_CONNS)
     else:
         c.kv('binPath', app['binary'])
         c.kv('maxConns', NODE_MAX_CONNS)

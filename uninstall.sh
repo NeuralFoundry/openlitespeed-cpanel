@@ -12,7 +12,11 @@ fi
 "$PREFIX/bin/olscp" preview stop >/dev/null 2>&1 || true
 "$PREFIX/bin/olscp" cpanel-plugin uninstall >/dev/null 2>&1 || true
 
-systemctl stop olscp-ols-build.service >/dev/null 2>&1 || true
+systemctl stop olscp-ols-build.service olscp-update.service >/dev/null 2>&1 || true
+if [ -f /etc/cagefs/conf.d/olscp.cfg ]; then
+    rm -f /etc/cagefs/conf.d/olscp.cfg
+    /usr/sbin/cagefsctl --update >/dev/null 2>&1 || true
+fi
 systemctl disable --now olscp-watch.service >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/olscp-watch.service
 systemctl daemon-reload
@@ -23,7 +27,7 @@ rm -rf "$WHM/cgi/olscp" "$WHM/templates/olscp" "$WHM/addon_plugins/olscp.png"
 rm -f /usr/local/sbin/olscp /etc/yum.repos.d/olscp-litespeed.repo
 
 if [ "${1:-}" = "--purge" ]; then
-    rm -rf "$PREFIX" /etc/olscp /var/lib/olscp /run/olscp /var/log/olscp.log /var/log/olscp-ols-build.log /home/olscp-cache
+    rm -rf "$PREFIX" /etc/olscp /var/lib/olscp /run/olscp /var/log/olscp.log /var/log/olscp-ols-build.log /var/log/olscp-update.log /home/olscp-cache
 else
     echo "files kept in $PREFIX (use --purge to remove)"
 fi

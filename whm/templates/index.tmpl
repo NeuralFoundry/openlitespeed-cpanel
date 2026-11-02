@@ -9,7 +9,8 @@
      ['settings', 'Settings'], ['logs', 'Logs']
    ];
    navp = pg == 'quic' ? 'cache' : pg;
-   APPTYPES = { node => 'Node.js', wsgi => 'Python' };
+   APPTYPES = { node => 'Node.js', wsgi => 'Python', rack => 'Ruby' };
+   CLMODES = { auto => 'Auto (LVE and CageFS when available)', off => 'Off', lve => 'LVE', cagefs => 'LVE and CageFS' };
    L = {
      php_mode => 'PHP handler', lsphp_children => 'LSAPI children', lsphp_max_conns => 'LSAPI connections',
      mem_limit => 'Process memory limit', proc_soft_limit => 'Process limit (soft)', proc_hard_limit => 'Process limit (hard)',
@@ -18,15 +19,17 @@
      http2 => 'HTTP/2', http3 => 'HTTP/3 (QUIC)', brotli => 'Brotli', ipv6 => 'IPv6 listener',
      cache_module => 'LSCache module', modsecurity => 'ModSecurity', autoindex => 'Directory listing', lscwp_version => 'LSCache plugin version',
      htaccess_watch => 'Watch .htaccess files', htaccess_scan_interval => 'Full scan interval (s)',
-     webadmin_enabled => 'WebAdmin console', webadmin_listen => 'WebAdmin address'
+     webadmin_enabled => 'WebAdmin console', webadmin_listen => 'WebAdmin address', cloudlinux => 'Mode'
    };
-   SELECTS = { php_mode => ['auto','fpm','lsapi'], modsecurity => ['auto','off'], ipv6 => ['auto','on','off'], autoindex => ['auto','on','off'] };
+   SELECTS = { php_mode => ['auto','fpm','lsapi'], modsecurity => ['auto','off'], ipv6 => ['auto','on','off'], autoindex => ['auto','on','off'],
+               cloudlinux => ['off','auto','lve','cagefs'] };
    GROUPS = [
      ['PHP', ['php_mode','lsphp_children','lsphp_max_conns','mem_limit','proc_soft_limit','proc_hard_limit']],
      ['Connections', ['workers','max_conns','keepalive_timeout','conn_timeout','max_req_body']],
      ['Protocols', ['http2','http3','brotli','ipv6']],
      ['Features', ['cache_module','modsecurity','autoindex','lscwp_version']],
      ['.htaccess', ['htaccess_watch','htaccess_scan_interval']],
+     ['CloudLinux', ['cloudlinux']],
      ['WebAdmin', ['webadmin_enabled','webadmin_listen']]
    ];
    BOOLS = { http2 => 1, http3 => 1, brotli => 1, cache_module => 1, htaccess_watch => 1, webadmin_enabled => 1 };
@@ -249,9 +252,13 @@
   </section>
 
   <section class="o-sec">
-    <div class="o-sec-h"><span class="o-dot [% s.cgroups ? 'ok' : '' %]"></span><h2>Resource limits</h2><a class="o-more" href="[% base %]?page=limits">Manage</a></div>
+    [% CL = st.cloudlinux %]
+    <div class="o-sec-h"><span class="o-dot [% s.cgroups || CL.mode != 'off' ? 'ok' : '' %]"></span><h2>Resource limits</h2><a class="o-more" href="[% base %]?page=limits">Manage</a></div>
     <div class="o-rows">
-      <div class="o-row"><span class="o-k">cgroups v2</span><span class="o-v">[% IF data.limits.available.defined && !data.limits.available %][% badge('bad', 'Unavailable') %][% ELSE %][% onoff(s.cgroups) %][% END %]</span><span class="o-a"></span></div>
+      [% IF CL.cloudlinux %]
+      <div class="o-row"><span class="o-k">CloudLinux</span><span class="o-v">[% IF CL.mode == 'off' && CL.lve %][% badge('warn', 'Available, off') %][% ELSIF CL.mode == 'off' %][% badge('off', 'Off') %][% ELSE %][% badge('ok', CLMODES.item(CL.mode)) %][% END %]</span><span class="o-a"><a href="[% base %]?page=settings#cloudlinux">Settings</a></span></div>
+      [% END %]
+      <div class="o-row"><span class="o-k">cgroups v2</span><span class="o-v">[% IF CL.mode && CL.mode != 'off' %][% badge('off', 'CloudLinux LVE in use') %][% ELSIF data.limits.available.defined && !data.limits.available %][% badge('bad', 'Unavailable') %][% ELSE %][% onoff(s.cgroups) %][% END %]</span><span class="o-a"></span></div>
       <div class="o-row"><span class="o-k">Limited accounts</span><span class="o-v">[% lim_n %] of [% data.limits.users.size || 0 %]</span><span class="o-a"></span></div>
     </div>
   </section>
@@ -259,7 +266,7 @@
   <section class="o-sec">
     <div class="o-sec-h"><span class="o-dot [% data.cpp.installed ? 'ok' : '' %]"></span><h2>cPanel plugin</h2></div>
     <div class="o-rows">
-      <div class="o-row"><span class="o-k">LiteSpeed Cache</span><span class="o-v">[% IF data.cpp.installed %][% badge('ok', 'Installed') %][% ELSE %][% badge('off', 'Not installed') %][% END %]</span>
+      <div class="o-row"><span class="o-k">Cache and applications</span><span class="o-v">[% IF data.cpp.installed %][% badge('ok', 'Installed') %][% ELSE %][% badge('off', 'Not installed') %][% END %]</span>
         <span class="o-a">[% IF data.cpp.installed %][% act('cpplugin_uninstall', 'Uninstall', 'o-link dan', 'Remove the LiteSpeed Cache plugin from cPanel?') %][% ELSE %][% act('cpplugin_install', 'Install') %][% END %]</span></div>
     </div>
   </section>
@@ -306,7 +313,7 @@
   <tr>
     <td class="w"><b>[% x.vhost | html %]</b></td><td class="n">[% x.uri | html %]</td>
     <td class="n">[% tn = APPTYPES.${x.type} || x.type; tn | html %]</td><td class="w">[% x.root | html %]</td>
-    <td class="n">[% x.startup | html %]</td>
+    <td class="n">[% x.startup | html %][% IF x.log %]<span class="o-sub">[% x.log | html %]</span>[% END %]</td>
     <td class="w">[% x.binary | html %][% IF x.note %]<span class="o-sub">[% x.note | html %]</span>[% END %]</td>
     <td class="n">[% x.mode | html %]</td>
     <td>[% IF x.processes %][% badge('ok', 'Running') %][% ELSE %][% badge('off', 'Idle') %][% END %]</td>
@@ -521,6 +528,7 @@
 [% LM = data.limits; cfg = LM.config %]
 [% IF LM.error %]<div class="o-msg bad">[% LM.error | html %]</div>[% END %]
 [% IF LM.available.defined && !LM.available %]<div class="o-msg bad">cgroups v2 is not available on this server</div>[% END %]
+[% IF st.cloudlinux.mode && st.cloudlinux.mode != 'off' %]<div class="o-msg info">CloudLinux LVE limits apply. Set them in LVE Manager.</div>[% END %]
 <form method="post" action="[% base %]" class="o-bar">
   <input type="hidden" name="action" value="settings"><input type="hidden" name="page" value="limits"><input type="hidden" name="only" value="cgroups">
   <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0"><input type="checkbox" name="cgroups" value="1"[% IF s.cgroups %] checked[% END %]> Enforce resource limits (cgroups v2)</label>
@@ -576,9 +584,28 @@
         <span class="o-a">[% IF B.current == 'olscp' && (!B.official_available.defined || B.official_available) %][% act('ols_use', 'Use official build', '', 'Switch to the official build and restart OpenLiteSpeed?', '<input type="hidden" name="target" value="official">') %][% END %]</span></div>
       <div class="o-row"><span class="o-k">Build job</span>
         <span class="o-v">[% IF job.running %][% badge('warn', 'Building') %] <span class="o-sub" style="display:inline">[% data.build_age | html %]</span>[% ELSIF job.finished && job.ok %][% badge('ok', 'Built') %] <span class="o-sub" style="display:inline">[% ts(job.finished) %]</span>[% ELSIF job.finished %][% badge('bad', 'Failed') %] <span class="o-sub" style="display:inline">[% ts(job.finished) %]</span>[% ELSE %][% badge('off', 'Not started') %][% END %]</span>
-        <span class="o-a">[% IF !job.running %][% act('ols_build', B.olscp_available ? 'Rebuild' : 'Build', 'o-btn pri', 'Compile the olscp build of OpenLiteSpeed now? This installs build tools and takes about 10 minutes.') %][% END %]</span></div>
+        <span class="o-a">[% IF !job.running %][% act('ols_build', B.olscp_available ? 'Rebuild' : 'Build', B.prebuilt ? 'o-link' : 'o-btn pri', 'Compile the olscp build of OpenLiteSpeed now? This installs build tools and takes about 10 minutes.') %][% END %]</span></div>
+      [% IF B.prebuilt %]
+      <div class="o-row"><span class="o-k">Prebuilt</span><span class="o-v">[% IF B.prebuilt_current %][% badge('ok', B.current == 'olscp' ? 'In use' : 'Downloaded') %][% ELSE %][% badge('off', 'Available') %][% END %] <span class="o-sub" style="display:inline">[% B.prebuilt.platform | upper | html %]</span></span>
+        <span class="o-a">[% IF !job.running && !B.prebuilt_current %][% act('ols_fetch', 'Download and use', 'o-btn pri', 'Download the prebuilt olscp build, check its SHA-256 and restart OpenLiteSpeed with it?') %][% END %]</span></div>
+      [% END %]
     </div>
-    [% IF job.log.size %]<div style="padding:0 16px 14px"><div class="o-pre" style="max-height:260px">[% job.log.join("\n") | html %]</div></div>[% END %]
+    [% IF job.log.size && (job.running || (job.finished && !job.ok)) %]<div style="padding:0 16px 14px"><div class="o-pre" style="max-height:260px">[% job.log.join("\n") | html %]</div></div>[% END %]
+  </section>
+
+  [% U = data.update; uj = U.job %]
+  <section class="o-sec" id="update">
+    <div class="o-sec-h"><span class="o-dot [% U.available ? 'warn' : (U.error ? '' : 'ok') %]"></span><h2>olscp</h2><a class="o-more" href="https://github.com/NeuralFoundry/openlitespeed-cpanel/releases" target="_blank" rel="noopener">Releases</a></div>
+    <div class="o-rows">
+      <div class="o-row"><span class="o-k">Installed</span><span class="o-v"><b>[% data.version | html %]</b></span><span class="o-a">[% act('update_check', 'Check now') %]</span></div>
+      <div class="o-row"><span class="o-k">Latest release</span>
+        <span class="o-v">[% IF U.latest %][% U.latest | html %][% IF U.available %] [% badge('warn', 'Update available') %][% ELSE %] [% badge('ok', 'Up to date') %][% END %][% ELSE %][% badge('off', 'Unknown') %][% END %][% IF U.error %] <span class="o-sub" style="display:inline">[% U.error | html %]</span>[% END %]</span>
+        <span class="o-a">[% IF U.available && !uj.running %][% act('update_start', 'Update to ' _ U.latest, 'o-btn pri', 'Update olscp to ' _ U.latest _ '? OpenLiteSpeed reloads gracefully.') %][% END %]</span></div>
+      [% IF uj.running || uj.finished %]
+      <div class="o-row"><span class="o-k">Update job</span><span class="o-v">[% IF uj.running %][% badge('warn', 'Updating') %][% ELSIF uj.ok %][% badge('ok', 'Updated') %] <span class="o-sub" style="display:inline">[% ts(uj.finished) %]</span>[% ELSE %][% badge('bad', 'Failed') %] <span class="o-sub" style="display:inline">[% ts(uj.finished) %]</span>[% END %]</span><span class="o-a"></span></div>
+      [% END %]
+    </div>
+    [% IF uj.log.size && (uj.running || !uj.ok) %]<div style="padding:0 16px 14px"><div class="o-pre" style="max-height:260px">[% uj.log.join("\n") | html %]</div></div>[% END %]
   </section>
 
   <section class="o-sec">
@@ -603,11 +630,12 @@
 <form method="post" action="[% base %]" class="o-form">
   <input type="hidden" name="action" value="settings"><input type="hidden" name="page" value="settings"><input type="hidden" name="only" value="[% skeys.join(',') %]">
   [% FOREACH g IN GROUPS %]
-  <h3[% IF g.0 == 'WebAdmin' %] id="webadmin"[% END %]>[% g.0 | html %]</h3>
+  <h3[% IF g.0 == 'WebAdmin' %] id="webadmin"[% ELSIF g.0 == 'CloudLinux' %] id="cloudlinux"[% END %]>[% g.0 | html %]</h3>
     [% FOREACH k IN g.1 %]
     <div class="o-fr"><label for="s_[% k %]">[% L.item(k) | html %]</label><div class="o-ctl">
-      [% IF SELECTS.item(k) %]<select id="s_[% k %]" name="[% k %]">[% FOREACH o IN SELECTS.item(k) %]<option value="[% o %]"[% IF s.item(k) == o %] selected[% END %]>[% o == 'fpm' ? 'PHP-FPM' : (o == 'lsapi' ? 'LSAPI' : o.ucfirst) %]</option>[% END %]</select>
+      [% IF SELECTS.item(k) %]<select id="s_[% k %]" name="[% k %]">[% FOREACH o IN SELECTS.item(k) %]<option value="[% o %]"[% IF s.item(k) == o %] selected[% END %]>[% k == 'cloudlinux' ? CLMODES.item(o) : (o == 'fpm' ? 'PHP-FPM' : (o == 'lsapi' ? 'LSAPI' : o.ucfirst)) %]</option>[% END %]</select>
         [% IF k == 'autoindex' && s.php_mode != 'lsapi' %][% badge('warn', 'Off for PHP-FPM sites') %][% END %]
+        [% IF k == 'cloudlinux' %][% CL = st.cloudlinux; IF !CL.lve %][% badge('off', 'Not detected') %][% ELSE %][% badge(CL.mode == 'off' ? 'off' : 'ok', 'In use: ' _ CLMODES.item(CL.mode)) %][% END %][% END %]
       [% ELSIF BOOLS.item(k) %]<input id="s_[% k %]" type="checkbox" name="[% k %]" value="1"[% IF s.item(k) %] checked[% END %]>
       [% ELSIF k == 'max_req_body' || k == 'mem_limit' || k == 'webadmin_listen' || k == 'lscwp_version' %]<input id="s_[% k %]" type="text" name="[% k %]" value="[% s.item(k) | html %]">
       [% ELSE %]<input id="s_[% k %]" type="number" min="0" name="[% k %]" value="[% s.item(k) | html %]">[% END %]

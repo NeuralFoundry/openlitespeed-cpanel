@@ -5,7 +5,7 @@ import os
 import pwd
 import re
 
-from . import apps, const, htaccess, util
+from . import apps, cloudlinux, const, htaccess, util
 
 LOG_FORMAT = '%h %l %u %t "%r" %>s %b "%{Referer}i" "%{User-Agent}i"'
 SERVICE_BACKENDS = [
@@ -25,6 +25,20 @@ REDIRECT_PATHS = 'cpanel|controlpanel|kpanel|securecontrolpanel|securecpanel|whm
 AUTOINDEX_URI = '/_autoindex/default.php'
 DEFAULT_DENIED = [r'^(\.ht(access|passwds?)|\.user\.ini|php\.ini)$', r'^(error_log|stderr\.log)$']
 WELL_KNOWN = r'exp:^/\.well-known/.*'
+MAX_LINE = 8000
+MAX_CONTEXT = 4000
+CONTROL = re.compile(r'[\x00-\x1f\x7f]')
+
+
+def clean(value):
+    return CONTROL.sub(' ', str(value)).rstrip('\\')
+
+
+def fit(line, where):
+    if len(line) <= MAX_LINE:
+        return True
+    util.log('configuration line longer than %d characters dropped in %s' % (MAX_LINE, where), 'WARN')
+    return False
 
 
 def autoindex_on(state, settings, vht=None):
@@ -57,7 +71,7 @@ class Block(object):
     def kv(self, key, value):
         if value is None or value == '':
             return self
-        self.items.append(('kv', key, value))
+        self.items.append(('kv', key, clean(value)))
         return self
 
     def raw(self, text):
@@ -70,7 +84,7 @@ class Block(object):
         return self
 
     def block(self, head):
-        b = Block(head)
+        b = Block(clean(head))
         self.items.append(('block', b, None))
         return b
 
@@ -84,14 +98,19 @@ class Block(object):
         ipad = '  ' * inner
         for kind, a, b in self.items:
             if kind == 'kv':
-                out.append('%s%-24s %s' % (ipad, a, b))
+                line = '%s%-24s %s' % (ipad, a, b)
+                if fit(line, self.head):
+                    out.append(line)
             elif kind == 'raw':
                 for line in a.splitlines():
                     out.append(line if not line.strip() else ipad + line)
             elif kind == 'heredoc':
                 tag = 'END_' + a
                 out.append('%s%-24s <<<%s' % (ipad, a, tag))
-                out.extend(l.replace('\n', ' ') for l in b)
+                for l in b:
+                    l = CONTROL.sub(' ', str(l))
+                    if l.strip() != tag and fit(l, self.head):
+                        out.append(l)
                 out.append(tag)
             else:
                 out.append(a.render(inner))
@@ -319,6 +338,135 @@ def global_headers(state):
     return out
 
 
+def ver_lsphp(ver):
+    p = os.path.join(const.EA_PHP_ROOT, ver, 'root/usr/bin/lsphp')
+    return p if os.access(p, os.X_OK) else ''
+
+
+def php_types(vh, vht, lsapi):
+    out = {}
+    if not lsapi:
+        return out
+    out[vh.php] = 'application/x-httpd-php'
+    for ver in sorted(vht.php_versions):
+        if ver != vh.php and ver_lsphp(ver):
+            out[ver] = 'application/x-httpd-olscp-' + ver
+    return out
+
+
+def handler_issues(vh, vht, types, lsapi):
+    out = []
+    for ctx in vht.contexts:
+        h = ctx.get('php_handler')
+        if not h or h[0] in types:
+            continue
+        if h[0] == vh.php and all(x in htaccess.PHP_SUFFIXES for x in h[1]):
+            continue
+        why = 'LSAPI for %s is not installed' % h[0] if lsapi else 'needs the LSAPI PHP mode'
+        out.append((ctx['location'] + '.htaccess', ['AddHandler %s: %s' % (h[0], why)]))
+    return out
+
+
+def context_body(c, ctx, scope, lsapi, live, types, app=None, clone=None):
+    policy_lines(c, scope, ctx.get('realm'), browse=1)
+    entries = list(ctx.get('mime', []))
+    h = ctx.get('php_handler')
+    if h and not app and h[0] in types:
+        entries.append(('addMIMEType', '%s %s' % (types[h[0]], ' '.join(h[1]))))
+    mime = {}
+    for k, v in entries:
+        mime[k] = mime[k] + ', ' + v if k == 'addMIMEType' and k in mime else v
+    for k in sorted(mime):
+        c.kv(k, mime[k])
+    if lsapi and ctx['php'] and not app:
+        c.block('phpIniOverride').raw('\n'.join(ctx['php']))
+    inline = list(ctx.get('pre_rules', []))
+    if clone is not None:
+        inline += clone
+    elif not live or app:
+        inline += [l for l in ctx['rewrite'] if not l.lower().startswith('rewriteengine')]
+    full = clone is not None or not live or app
+    if inline:
+        r = c.block('rewrite')
+        if full:
+            r.kv('enable', 1)
+        r.heredoc('rules', inline)
+    elif app:
+        c.block('rewrite').kv('enable', 0)
+
+
+def clone_rules(ctx):
+    src = ctx.get('rewrite_from')
+    if not src:
+        return []
+    owner, lines = src
+    engine = [l.split(None, 1)[1].strip().lower() for l in lines
+              if l.lower().startswith('rewriteengine') and len(l.split()) > 1]
+    if engine and engine[-1] == 'off':
+        return None
+    bases = [l.split(None, 1)[1].strip() for l in lines if l.lower().startswith('rewritebase') and len(l.split()) > 1]
+    if bases and bases[-1].rstrip('/') + '/' != owner:
+        return False
+    rules = [l for l in lines if not l.lower().startswith(('rewriteengine', 'rewritebase', 'rewriteoptions'))]
+    return ['RewriteBase ' + owner] + rules if rules else []
+
+
+def nested_uris(uri, uris):
+    inner = sorted(u for u in uris if u != uri and u.startswith(uri) and not u.startswith('exp:'))
+    out = []
+    for u in inner:
+        if not any(u.startswith(o) for o in out):
+            out.append(u)
+    return [u[len(uri):] for u in out]
+
+
+def header_groups(blocks):
+    lists = [htaccess.ext_list(pat, rx) for pat, rx, _fs, _level in blocks]
+    if not all(lists):
+        return [(pat, rx, fs) for pat, rx, fs, _level in sorted(blocks, key=lambda b: -b[3])]
+    groups = {}
+    for ext in sorted({e for l in lists for e in l}):
+        key = tuple(i for i, l in enumerate(lists) if ext in l)
+        groups.setdefault(key, []).append(ext)
+    out = []
+    for key in sorted(groups):
+        fs = htaccess.Scope()
+        for i in key:
+            fs = htaccess.with_files(fs, blocks[i][2])
+        out.append((r'\.(%s)$' % '|'.join(re.escape(e) for e in groups[key]), True, fs))
+    return out
+
+
+def header_contexts(vb, vht, rendered, prefixes, headers, lsapi, types, seen):
+    issues = []
+    for ctx in vht.contexts:
+        if not ctx.get('file_headers') or ctx['uri'] not in rendered:
+            continue
+        acc = ctx['scope'].access
+        if acc and acc.get('deny') == ['ALL'] and not acc.get('allow'):
+            continue
+        where = ctx['location'] + '.htaccess'
+        rules = clone_rules(ctx)
+        if rules is False:
+            issues.append((where, ['<FilesMatch> headers: RewriteBase differs from the directory']))
+            continue
+        exclude = nested_uris(ctx['uri'], prefixes)
+        base = htaccess.with_headers(ctx['scope'], headers) if headers else ctx['scope']
+        for pat, is_regex, fs in header_groups(ctx['file_headers']):
+            uri = htaccess.files_uri_regex(ctx['uri'], pat, is_regex, exclude)
+            if len(uri) > MAX_CONTEXT:
+                issues.append((where, ['<FilesMatch> headers: too many subdirectories with their own settings']))
+                break
+            if uri in seen:
+                continue
+            seen.add(uri)
+            c = vb.block('context ' + uri)
+            context_body(c, ctx, htaccess.with_files(base, fs), lsapi, False, types, clone=rules or [])
+            if rules is None and not ctx.get('pre_rules'):
+                c.block('rewrite').kv('enable', 0)
+    return issues
+
+
 def render_vhost(vh, state, settings, vht, live=False):
     vht.apps, vht.app_issues = apps.resolve_all(vht.app_specs, vh.homedir, passenger_defaults(state))
     app_by_uri = {a['uri']: a for a in vht.apps}
@@ -358,10 +506,15 @@ def render_vhost(vh, state, settings, vht, live=False):
         lsapi = True
         if vht.php_root:
             vb.block('phpIniOverride').raw('\n'.join(vht.php_root))
+    types = php_types(vh, vht, lsapi)
+    vht.report.extend(handler_issues(vh, vht, types, lsapi))
     if handler:
         sh = vb.block('scripthandler')
         for suf in const.PHP_SUFFIXES:
             sh.kv('add', '%s %s' % (handler, suf))
+        for ver in sorted(types):
+            if ver != vh.php:
+                sh.kv('add', 'lsapi:%s olscp-%s' % (lsphp_name(vh.user, ver), ver))
 
     if settings.get('cache_module', True):
         m = vb.block('module cache')
@@ -400,6 +553,7 @@ def render_vhost(vh, state, settings, vht, live=False):
     if headers and not any(ctx['uri'] == '/' for ctx in contexts):
         contexts.insert(0, {'uri': '/', 'location': vh.docroot.rstrip('/') + '/', 'scope': htaccess.Scope(),
                             'rewrite': [], 'php': []})
+    rendered = set()
     for ctx in contexts:
         if ctx['uri'] in cgi_uris or ctx['uri'] == '/cgi-sys/':
             continue
@@ -412,24 +566,8 @@ def render_vhost(vh, state, settings, vht, live=False):
             apps.context(c, app)
         else:
             c.kv('location', ctx['location'])
-        policy_lines(c, scope, ctx.get('realm'), browse=1)
-        mime = {}
-        for k, v in ctx.get('mime', []):
-            mime[k] = mime[k] + ', ' + v if k == 'addMIMEType' and k in mime else v
-        for k in sorted(mime):
-            c.kv(k, mime[k])
-        if lsapi and ctx['php'] and not app:
-            c.block('phpIniOverride').raw('\n'.join(ctx['php']))
-        inline = list(ctx.get('pre_rules', []))
-        if not live or app:
-            inline += [l for l in ctx['rewrite'] if not l.lower().startswith('rewriteengine')]
-        if inline:
-            r = c.block('rewrite')
-            if not live or app:
-                r.kv('enable', 1)
-            r.heredoc('rules', inline)
-        elif app:
-            c.block('rewrite').kv('enable', 0)
+            rendered.add(ctx['uri'])
+        context_body(c, ctx, scope, lsapi, live, types, app)
     for uri in sorted(app_by_uri):
         c = vb.block('context ' + uri)
         apps.context(c, app_by_uri[uri])
@@ -472,6 +610,9 @@ def render_vhost(vh, state, settings, vht, live=False):
             policy_lines(c, ht_by_uri[uri]['scope'], ht_by_uri[uri].get('realm'), browse=1)
         else:
             c.kv('allowBrowse', 1)
+
+    prefixes = taken | {'/cgi-sys/'} | {ctx['uri'] for ctx in vht.contexts} | {fc['uri'] for fc in vht.file_contexts}
+    vht.report.extend(header_contexts(vb, vht, rendered, prefixes, headers, lsapi, types, seen))
 
     if vh.ssl_cert:
         ssl_block(vb, vh.ssl_cert, settings, key=vh.ssl_key, chain=vh.ssl_chain)
@@ -598,7 +739,7 @@ def modsec_rules():
     return '\n'.join(l for l in lines if not overridden(l)) + '\n'
 
 
-def render_server(state, settings, vhosts):
+def render_server(state, settings, vhosts, extra_php=None):
     root = Block()
     root.kv('serverName', state.hostname)
     root.kv('user', 'nobody')
@@ -622,6 +763,9 @@ def render_server(state, settings, vhosts):
     root.kv('indexFiles', ', '.join(index_files(state)))
     root.kv('autoIndexURI', AUTOINDEX_URI)
     root.kv('autoLoadHtaccess', 1)
+    lve = cloudlinux.lve_value(settings)
+    if lve:
+        root.kv('enableLVE', lve)
 
     el = root.block('errorlog ' + const.APACHE_ERROR_LOG)
     el.kv('logLevel', 'NOTICE')
@@ -700,7 +844,7 @@ def render_server(state, settings, vhosts):
     cg.kv('memHardLimit', settings.get('mem_limit', '2047M'))
     cg.kv('procSoftLimit', settings.get('proc_soft_limit', 400))
     cg.kv('procHardLimit', settings.get('proc_hard_limit', 500))
-    cg.kv('cgroups', 2 if settings.get('cgroups') else 1)
+    cg.kv('cgroups', 2 if settings.get('cgroups') and not lve else 1)
 
     ad = root.block('accessDenyDir')
     for d in ('/', '/etc/*', '/dev/*', 'conf/*', 'admin/conf/*', '/root/*', '/var/cpanel/*'):
@@ -740,6 +884,15 @@ def render_server(state, settings, vhosts):
             continue
         seen.add(name)
         lsphp_processor(root, name, vh.user, vh.group, vh.lsphp, settings)
+    for vh, ver in extra_php or []:
+        if vh.fpm_socket and settings.get('php_mode', 'auto') in ('auto', 'fpm') or not vh.lsphp:
+            continue
+        name = lsphp_name(vh.user, ver)
+        path = ver_lsphp(ver)
+        if name in seen or not path:
+            continue
+        seen.add(name)
+        lsphp_processor(root, name, vh.user, vh.group, path, settings)
 
     if settings.get('cache_module', True):
         m = root.block('module cache')
@@ -871,16 +1024,18 @@ def render_all(state, settings, ht_files=None, live=False):
     files = {}
     vhosts = [vh for vh in state.vhosts if SAFE_NAME.match(vh.name) and vh.docroot and vh.user]
     skipped = [vh.name for vh in state.vhosts if vh not in vhosts]
-    server, dupes = render_server(state, settings, vhosts)
-    files[const.OLS_CONF] = server
     cache = {}
     report = {}
     app_info = {}
-    for vh in vhosts:
-        vht = htaccess.build(vh.docroot, ht_files or [], cache, vh.custom_includes, vh.custom_text)
+    built = [(vh, htaccess.build(vh.docroot, ht_files or [], cache, vh.custom_includes, vh.custom_text, vh.php))
+             for vh in vhosts]
+    extra = [(vh, ver) for vh, vht in built for ver in sorted(vht.php_versions)]
+    server, dupes = render_server(state, settings, vhosts, extra)
+    files[const.OLS_CONF] = server
+    for vh, vht in built:
+        files[os.path.join(const.OLS_VHOST_DIR, vh.name + '.conf')] = render_vhost(vh, state, settings, vht, live)
         if vht.report:
             report[vh.name] = vht.report
-        files[os.path.join(const.OLS_VHOST_DIR, vh.name + '.conf')] = render_vhost(vh, state, settings, vht, live)
         if vht.apps or vht.app_issues:
             app_info[vh.name] = {'user': vh.user, 'docroot': vh.docroot, 'apps': vht.apps, 'issues': vht.app_issues}
     files[os.path.join(const.OLS_VHOST_DIR, DEFAULT_VHOST + '.conf')] = render_default_vhost(state, settings)

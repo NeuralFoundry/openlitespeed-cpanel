@@ -155,13 +155,31 @@ class AppsTest(unittest.TestCase):
     def test_disabled_and_unsupported(self):
         root = self.t.app('rb', ['config.ru'])
         self.t.htaccess('a', 'PassengerAppRoot "%s"\nPassengerEnabled off\n' % root)
-        self.t.htaccess('b', 'PassengerAppRoot "%s"\nPassengerBaseURI "/b"\n' % root)
+        self.t.htaccess('b', 'PassengerAppRoot "%s"\nPassengerBaseURI "/b"\nPassengerAppType python\n' % root)
         self.t.htaccess('c', 'PassengerAppRoot "%s"\nPassengerAppType node\nPassengerStartupFile ../x.js\n' % root)
         found, issues = self.resolve(self.t.build())
         self.assertEqual(found, [])
         self.assertEqual(len(issues), 2)
-        self.assertTrue(any('Ruby' in i for i in issues))
+        self.assertTrue(any('passenger_wsgi.py not found' in i for i in issues))
         self.assertTrue(any('startup file' in i for i in issues))
+
+    def test_render_ruby_app(self):
+        root = self.t.app('rb', ['config.ru', 'Gemfile'])
+        text = APP_MANAGER.format(root=root).replace(
+            'PassengerNodejs /opt/cpanel/ea-nodejs10/bin/node',
+            'PassengerRuby /opt/cpanel/ea-ruby27/root/usr/libexec/passenger-ruby27\n'
+            '        PassengerNodejs %s' % self.t.node)
+        vht = self.t.build([('rb.conf', text)])
+        conf = render_vhost(self.t, vht)
+        self.assertEqual(vht.app_issues, [])
+        a = vht.apps[0]
+        self.assertEqual((a['type'], a['startup'], a['binary']), ('rack', 'config.ru', self.t.ruby))
+        self.assertIn('passenger-ruby27', a['note'])
+        block = conf.split('context /api/ {', 1)[1].split('\n}', 1)[0]
+        for line in (kv('binPath', '%s %s' % (self.t.ruby, self.t.lsrack)), kv('appType', 'node'),
+                     kv('startupFile', 'config.ru'), kv('maxConns', apps.RACK_MAX_CONNS),
+                     kv('env', 'OLSCP_APP_URI=/api/'), kv('appserverEnv', 0)):
+            self.assertIn(line, block)
 
     def test_missing_startup_file(self):
         root = self.t.app('empty', ['package.json'])

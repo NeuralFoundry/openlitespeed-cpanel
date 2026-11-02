@@ -1,0 +1,45 @@
+#!/usr/local/cpanel/3rdparty/bin/perl
+
+package bin::admin::Olscp::Apps;
+
+use strict;
+use warnings;
+
+use parent 'Cpanel::AdminBin::Script::Call';
+
+use Cpanel::JSON ();
+
+__PACKAGE__->run( alarm => 120 ) if !caller;
+
+sub _actions { return qw(LIST RESTART) }
+
+sub _olscp {
+    my @args = @_;
+    my $pid  = open( my $fh, '-|' );
+    die "fork failed\n" unless defined $pid;
+    if ( !$pid ) {
+        open( STDERR, '>', '/dev/null' );
+        exec( '/usr/local/olscp/bin/olscp', '--json', @args ) or exit 127;
+    }
+    local $/;
+    my $out = <$fh>;
+    close $fh;
+    my $data = eval { Cpanel::JSON::Load($out) };
+    die "unexpected output\n" unless ref $data eq 'HASH';
+    die "$data->{'error'}\n" if $data->{'error'};
+    return $data;
+}
+
+sub LIST {
+    my ($self) = @_;
+    return _olscp( 'apps', 'list', '--user', $self->get_caller_username() );
+}
+
+sub RESTART {
+    my ( $self, $vhost, $uri ) = @_;
+    die "invalid domain\n"      unless defined $vhost && $vhost =~ /\A[A-Za-z0-9._-]{1,253}\z/;
+    die "invalid application\n" unless defined $uri   && $uri   =~ m{\A/[A-Za-z0-9._~\@+=,/-]{0,255}\z};
+    return _olscp( 'apps', 'restart', '--user', $self->get_caller_username(), '--vhost', $vhost, '--uri', $uri );
+}
+
+1;

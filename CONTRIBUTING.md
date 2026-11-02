@@ -28,13 +28,15 @@ The generated configuration is in `/usr/local/olscp/ws/conf/`, the olscp log in 
 | `lib/olscp/render.py` | Writes the OpenLiteSpeed configuration |
 | `lib/olscp/htaccess.py` | `.htaccess` and Apache directive translation |
 | `lib/olscp/apacheconf.py` | Apache configuration parser |
-| `lib/olscp/apps.py` | Node.js and Python applications from Passenger settings |
-| `libexec/lswsgi.py` | WSGI server for Python applications |
+| `lib/olscp/apps.py` | Node.js, Python and Ruby applications from Passenger settings |
+| `lib/olscp/cloudlinux.py` | CloudLinux LVE and CageFS |
+| `lib/olscp/update.py`, `lib/olscp/olsbuild.py` | Updates, prebuilt and compiled OpenLiteSpeed builds |
+| `libexec/lswsgi.py`, `libexec/lsrack.rb` | WSGI and Rack servers for Python and Ruby applications |
 | `tests/` | Unit tests |
 | `whm/` | WHM plugin, Perl CGI and Template Toolkit |
 | `cpanel/` | cPanel plugin and AdminBin |
 | `libexec/`, `hooks/`, `systemd/` | httpd wrapper, OpenLiteSpeed installer, EasyApache hook, watcher service |
-| `build/` | OpenLiteSpeed build script and patches |
+| `build/` | OpenLiteSpeed build script, patches and the SHA-256 sums of the prebuilt binaries |
 
 ## Tests
 
@@ -42,7 +44,7 @@ The generated configuration is in `/usr/local/olscp/ws/conf/`, the olscp log in 
 python3 -m unittest discover -s tests
 ```
 
-The tests run without cPanel. Add a test for every translated directive and every fixed bug.
+The tests run without cPanel. The application server tests need Unix sockets, and the Rack tests also Ruby with the `rack` gem; they are skipped otherwise. Add a test for every translated directive and every fixed bug.
 
 ## Changing the OpenLiteSpeed patch
 
@@ -52,6 +54,7 @@ The patch in `build/patches/` applies to the OpenLiteSpeed commit pinned in `bui
 2. Make your change and write the patch again with `git diff > build/patches/0001-htaccess-live-reload.patch`.
 3. On the test server run `olscp ols build`, then `olscp ols use olscp`.
 4. Create, edit and delete `.htaccess` files with rewrite rules while the server is under load, and check `error_log` for crashes.
+5. For a release, build the binary in clean AlmaLinux 8 and 9 containers with `build/build-ols.sh all`, compress it with `gzip -9 -n`, attach it to the release and put its SHA-256 in `build/prebuilt.txt`.
 
 ## Pull requests
 

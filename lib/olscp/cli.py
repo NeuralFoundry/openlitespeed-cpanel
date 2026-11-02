@@ -89,6 +89,8 @@ def cmd_settings(args):
             k, v = item.split('=', 1)
             if k not in const.DEFAULT_SETTINGS:
                 raise RuntimeError('unknown setting: %s' % k)
+            if k in const.SETTING_CHOICES and v not in const.SETTING_CHOICES[k]:
+                raise RuntimeError('invalid value for %s: %s' % (k, v))
             vals[k] = parse_value(k, v)
         s = util.save_settings(vals)
         if args.apply:
@@ -200,6 +202,12 @@ def cmd_stats(args):
     out(stats.read(), args.json)
 
 
+def limits_enabled():
+    from . import cloudlinux
+    settings = util.load_settings()
+    return bool(settings.get('cgroups')) and cloudlinux.mode(settings) == 'off'
+
+
 def cmd_limits(args):
     from . import limits
     if args.action == 'show':
@@ -207,10 +215,10 @@ def cmd_limits(args):
     elif args.action == 'set':
         vals = {'cpu': args.cpu, 'mem': args.mem, 'tasks': args.tasks, 'io': args.io}
         limits.set_limits(args.scope, args.name, vals)
-        res = limits.apply(enabled=bool(util.load_settings().get('cgroups')))
+        res = limits.apply(enabled=limits_enabled())
         out(res, args.json)
     else:
-        out(limits.apply(enabled=bool(util.load_settings().get('cgroups')), force=True), args.json)
+        out(limits.apply(enabled=limits_enabled(), force=True), args.json)
 
 
 def cmd_blocked(args):
@@ -250,6 +258,25 @@ def cmd_ols(args):
         out(olsbuild.info(), args.json)
     elif args.action == 'use':
         out(olsbuild.use(args.which), args.json)
+    elif args.action == 'fetch':
+        res = olsbuild.fetch()
+        if args.use:
+            res.update(olsbuild.use('olscp'))
+        out(res, args.json)
+    elif args.action == 'refresh':
+        out(olsbuild.refresh(), args.json)
+
+
+def cmd_update(args):
+    from . import update
+    if args.action == 'check':
+        out(update.info(force=True), args.json)
+    elif args.action == 'status':
+        out(update.info(), args.json)
+    elif args.action == 'start':
+        out(update.start(), args.json)
+    elif args.action == 'run':
+        out(update.run(args.tag), args.json)
 
 
 def cmd_apache(args):
@@ -273,8 +300,11 @@ def cmd_apps(args):
     rows, issues = [], []
     for vhost in sorted(data):
         d = data[vhost]
+        if args.user and d.get('user') != args.user:
+            continue
         for a in d.get('apps', []):
-            rows.append(dict(a, vhost=vhost, user=d.get('user', '')))
+            log = [e.split('=', 1)[1] for e in a.get('env', []) if e.startswith('LS_STDERR_LOG=')]
+            rows.append(dict(a, vhost=vhost, user=d.get('user', ''), log=log[0] if log else ''))
         for i in d.get('issues', []):
             issues.append({'vhost': vhost, 'issue': i})
     if args.action == 'restart':
@@ -287,6 +317,9 @@ def cmd_apps(args):
     counts = apps.running(rows) if rows else {}
     for r in rows:
         r['processes'] = counts.get(r['root'].rstrip('/'), 0)
+    if args.user:
+        keep = ('vhost', 'uri', 'type', 'root', 'startup', 'binary', 'mode', 'note', 'log', 'processes')
+        rows = [{k: r.get(k, '') for k in keep} for r in rows]
     if args.json:
         out({'apps': rows, 'issues': issues}, True)
         return
@@ -337,10 +370,15 @@ def main(argv=None):
     ca.add_argument('--all', action='store_true')
     ca.add_argument('--version')
     ov = sp.add_parser('ols')
-    ov.add_argument('action', choices=['versions', 'upgrade', 'build', 'build-run', 'build-status', 'use'])
+    ov.add_argument('action', choices=['versions', 'upgrade', 'build', 'build-run', 'build-status', 'use', 'fetch',
+                                       'refresh'])
     ov.add_argument('which', nargs='?', choices=['olscp', 'official'])
     ov.add_argument('--version')
     ov.add_argument('--rpm')
+    ov.add_argument('--use', action='store_true')
+    up = sp.add_parser('update')
+    up.add_argument('action', nargs='?', default='status', choices=['status', 'check', 'start', 'run'])
+    up.add_argument('--tag')
     ap = sp.add_parser('apache')
     ap.add_argument('action', choices=['report'])
     cp = sp.add_parser('cpanel-plugin')
@@ -350,6 +388,7 @@ def main(argv=None):
     am.add_argument('action', nargs='?', default='list', choices=['list', 'restart'])
     am.add_argument('--vhost')
     am.add_argument('--uri')
+    am.add_argument('--user')
     sp.add_parser('stats')
     li = sp.add_parser('limits')
     li.add_argument('action', choices=['show', 'set', 'apply'])
@@ -406,6 +445,8 @@ def main(argv=None):
             cmd_cache(args)
         elif args.cmd == 'ols':
             cmd_ols(args)
+        elif args.cmd == 'update':
+            cmd_update(args)
         elif args.cmd == 'apache':
             cmd_apache(args)
         elif args.cmd == 'cpanel-plugin':

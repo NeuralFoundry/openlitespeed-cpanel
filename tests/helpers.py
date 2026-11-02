@@ -19,15 +19,18 @@ class Tree(object):
         os.makedirs(self.bin)
         self.node = self.exe('node')
         self.python = self.exe('python3')
+        self.ruby = self.exe('ruby')
         starters = os.path.join(self.base, 'fcgi-bin')
         os.makedirs(starters)
         for n in ('lsnode.js', 'lsnodesm.js'):
             self.write(os.path.join(starters, n), '')
         self.lswsgi = self.write(os.path.join(self.base, 'lswsgi.py'), '')
-        self.saved = (apps.STARTERS, apps.LSWSGI, apps.find_binary)
+        self.lsrack = self.write(os.path.join(self.base, 'lsrack.rb'), '')
+        self.saved = (apps.STARTERS, apps.LSWSGI, apps.LSRACK, apps.find_binary)
         apps.STARTERS = starters
         apps.LSWSGI = self.lswsgi
-        apps.find_binary = lambda kind: self.node if kind == 'node' else (self.python if kind == 'python' else '')
+        apps.LSRACK = self.lsrack
+        apps.find_binary = lambda kind: {'node': self.node, 'python': self.python, 'ruby': self.ruby}.get(kind, '')
         htaccess._present[:] = [htaccess.PRESENT_MODULES | {'passenger', 'env'}]
 
     def exe(self, name):
@@ -62,7 +65,7 @@ class Tree(object):
         return htaccess.build(self.docroot, self.files(), {}, None, includes or [])
 
     def close(self):
-        apps.STARTERS, apps.LSWSGI, apps.find_binary = self.saved
+        apps.STARTERS, apps.LSWSGI, apps.LSRACK, apps.find_binary = self.saved
         htaccess._present[:] = []
         shutil.rmtree(self.base, ignore_errors=True)
 
