@@ -143,6 +143,7 @@ bash uninstall.sh --purge  # also delete /usr/local/olscp, settings, cache and l
 - The CloudLinux support uses the LVE and CageFS hooks built into OpenLiteSpeed. It was tested with a stand-in for `liblve`, not yet on a licensed CloudLinux server.
 - Directory listing is not available for sites on PHP-FPM, because cPanel FPM pools restrict `doc_root`. It works with LSAPI.
 - Clients without SNI on dedicated IPs receive the server certificate.
+- Release archives are not signed. Updates rely on the HTTPS connection to GitHub; prebuilt binaries are also checked against the SHA-256 in `build/prebuilt.txt`.
 
 ## Contributing
 
