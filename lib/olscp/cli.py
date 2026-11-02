@@ -118,9 +118,9 @@ def lsadm():
 def cmd_webadmin(args):
     if args.reset_password:
         pw = util.run(['/usr/bin/openssl', 'rand', '-base64', '18'])[1].strip().replace('/', 'x').replace('+', 'y')[:20]
-        rc, enc = util.run([const.OLS_ROOT + '/admin/fcgi-bin/admin_php', '-q',
-                            const.OLS_ROOT + '/admin/misc/htpasswd.php', pw])
-        if rc != 0:
+        rc, enc = util.run([const.OLS_ROOT + '/admin/fcgi-bin/admin_php', '-q', const.BASE + '/libexec/htpasswd.php'],
+                           data=(pw + '\n').encode())
+        if rc != 0 or not enc.strip().startswith('$2'):
             raise RuntimeError('password hash failed')
         util.write_atomic(const.OLS_ROOT + '/admin/conf/htpasswd', 'admin:%s\n' % enc.strip(), 0o600, lsadm())
         out({'user': 'admin', 'password': pw, 'listen': util.load_settings().get('webadmin_listen')}, args.json)

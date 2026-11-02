@@ -254,6 +254,6 @@ def docroots():
     return [vh.docroot for vh in cpanel.load_state().vhosts]
 
 
-def rescan_htaccess(restart=True, reason='htaccess-scan'):
-    files = htaccess.rescan(docroots())
+def rescan_htaccess(restart=True, reason='htaccess-scan', roots=None):
+    files = htaccess.rescan(docroots(), roots)
     return sync(restart=restart, reason=reason, force_restart=False), len(files)

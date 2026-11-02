@@ -79,6 +79,90 @@ class UpdateTest(unittest.TestCase):
                 update.extract(self.tarball(bad), self.dir, 'olscp-1')
 
 
+class UserFileTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = os.path.realpath(tempfile.mkdtemp(prefix='olscp-userfile-'))
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def write(self, name, text):
+        p = os.path.join(self.dir, name)
+        with open(p, 'w') as f:
+            f.write(text)
+        return p
+
+    def test_regular_file_and_limits(self):
+        from olscp import util
+        p = self.write('a', 'Header set A b\n')
+        self.assertEqual(util.read_user_file(p), 'Header set A b\n')
+        self.assertEqual(util.read_user_file(p, limit=4), '')
+        self.assertEqual(util.read_user_file(p, owners={os.stat(p).st_uid + 1}), '')
+        self.assertEqual(util.read_user_file(os.path.join(self.dir, 'missing')), '')
+
+    def test_symlinks_and_fifos_are_refused(self):
+        from olscp import util
+        target = self.write('secret', 'SetEnv PASSWORD x\n')
+        link = os.path.join(self.dir, 'link')
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest('symlinks not available')
+        self.assertEqual(util.read_user_file(link), '')
+        sub = os.path.join(self.dir, 'sub')
+        os.symlink(self.dir, sub)
+        self.assertEqual(util.read_user_file(os.path.join(sub, 'secret')), '')
+        if hasattr(os, 'mkfifo'):
+            fifo = os.path.join(self.dir, 'fifo')
+            os.mkfifo(fifo)
+            self.assertEqual(util.read_user_file(fifo), '')
+
+    @unittest.skipIf(os.name == 'nt', 'needs POSIX paths')
+    def test_scan_keeps_files_of_truncated_roots(self):
+        from olscp import htaccess
+        a = os.path.join(self.dir, 'a')
+        b = os.path.join(self.dir, 'b')
+        for d in (a, b):
+            os.makedirs(os.path.join(d, 'x', 'y'))
+            self.write(os.path.join(d, 'x', '.htaccess'), 'Header set A b\n')
+        os.makedirs(os.path.join(a, '.git'))
+        self.write(os.path.join(a, '.git', '.htaccess'), 'Require all denied\n')
+        saved = htaccess.STATE, htaccess.MAX_DIRS
+        htaccess.STATE = os.path.join(self.dir, 'state.json')
+        try:
+            htaccess.save([os.path.join(b, 'old', '.htaccess')])
+            files, partial = htaccess.scan([a, b], limit=2)
+            self.assertEqual(sorted(partial), sorted([a, b]))
+            htaccess.MAX_DIRS = 2
+            files = htaccess.rescan([a, b])
+            htaccess.MAX_DIRS = saved[1]
+            self.assertIn(os.path.join(b, 'old', '.htaccess'), files)
+            files, partial = htaccess.scan([a, b])
+            self.assertEqual(partial, [])
+            self.assertIn(os.path.join(a, '.git', '.htaccess'), files)
+            htaccess.save([os.path.join(b, 'old', '.htaccess'), os.path.join(a, 'gone', '.htaccess')])
+            files = htaccess.rescan([a, b], only=[a])
+            self.assertIn(os.path.join(b, 'old', '.htaccess'), files)
+            self.assertNotIn(os.path.join(a, 'gone', '.htaccess'), files)
+            self.assertIn(os.path.join(a, 'x', '.htaccess'), files)
+            self.assertEqual(htaccess.add_files([os.path.join(a, 'index.php')]), [])
+        finally:
+            htaccess.STATE, htaccess.MAX_DIRS = saved
+
+
+class LogLineTest(unittest.TestCase):
+    def test_line_parses_and_long_lines_are_cheap(self):
+        import time
+        from olscp import protect
+        line = ('1.2.3.4 - - [02/Nov/2026:20:26:11 +0000] "POST /wp-login.php HTTP/1.1" 200 12 "-" '
+                '"Mozilla/5.0 \\"x\\""')
+        self.assertEqual(protect.LINE.match(line).groups()[:3], ('1.2.3.4', 'POST', '/wp-login.php'))
+        evil = '1.2.3.4 - - [x] "GET /' + 'a' * 8000 + ' HTTP/1.1" 404 1 "a\\"b" "ua'
+        t = time.time()
+        protect.LINE.match(evil)
+        self.assertLess(time.time() - t, 0.5)
+
+
 class PrebuiltTest(unittest.TestCase):
     def test_manifest(self):
         saved = olsbuild.PREBUILT, olsbuild.platform

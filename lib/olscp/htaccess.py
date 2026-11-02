@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import time
 
 from . import apps, const, util
@@ -489,6 +490,8 @@ class Parser(object):
         if name in REWRITE:
             if top:
                 ht.rewrite.append(line)
+        elif name in ('php_admin_value', 'php_admin_flag') and not self.include:
+            ht.unsupported.append(parts[0])
         elif name in PHP_INI:
             if top:
                 ht.php.append(line)
@@ -643,9 +646,20 @@ class Parser(object):
             self.ht.redirects.append('RewriteRule %s %s [R=%s,L]' % (pat, dst.replace(' ', '%20'), status))
 
 
-def parse_file(path):
-    text = util.read_text(path, '') or ''
+def parse_file(path, owners=None):
+    text = util.read_user_file(path, owners=owners)
     return Parser(path, text).parse()
+
+
+def is_htaccess(path):
+    return os.path.basename(path) == '.htaccess' and safe_path(path)
+
+
+def regular(path):
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:
+        return False
 
 
 def scan_roots(docroots):
@@ -666,17 +680,20 @@ def ext_list(pat, is_regex):
     return [x for x in m.groups() if x][0].split('|') if m else None
 
 
-def scan(docroots, limit=MAX_DIRS):
+def scan(docroots, limit=None):
+    limit = limit or MAX_DIRS
     found = []
-    seen = 0
+    partial = []
     for root in scan_roots(docroots):
+        seen = 0
         stack = [(root, 0)]
         while stack:
             d, depth = stack.pop()
             seen += 1
             if seen > limit:
-                util.log('htaccess scan limit reached at %s' % d, 'WARN')
-                return found
+                util.log('htaccess scan limit reached in %s, keeping its known files' % root, 'WARN')
+                partial.append(root)
+                break
             try:
                 it = os.scandir(d)
             except OSError:
@@ -688,11 +705,14 @@ def scan(docroots, limit=MAX_DIRS):
                     try:
                         if e.name == '.htaccess' and e.is_file(follow_symlinks=False):
                             found.append(e.path)
-                        elif depth < MAX_DEPTH and e.is_dir(follow_symlinks=False) and e.name not in SKIP_DIRS:
-                            stack.append((e.path, depth + 1))
+                        elif e.is_dir(follow_symlinks=False):
+                            if depth < MAX_DEPTH and e.name not in SKIP_DIRS:
+                                stack.append((e.path, depth + 1))
+                            elif regular(os.path.join(e.path, '.htaccess')):
+                                found.append(os.path.join(e.path, '.htaccess'))
                     except OSError:
                         continue
-    return sorted(found)
+    return sorted(found), partial
 
 
 def save(files):
@@ -710,15 +730,23 @@ def load():
 def add_files(paths):
     data = load()
     files = set(data.get('files', []))
-    new = [p for p in paths if p not in files and safe_path(p)]
+    new = [p for p in paths if p not in files and is_htaccess(p)]
     if new:
         util.write_atomic(STATE, json.dumps({'time': data.get('time', 0), 'files': sorted(files | set(new))}), 0o600)
     return new
 
 
-def rescan(docroots):
+def under(path, roots):
+    return any(path.startswith(r.rstrip('/') + '/') for r in roots)
+
+
+def rescan(docroots, only=None):
     t0 = time.time()
-    files = scan(docroots)
+    files, partial = scan(only or docroots)
+    scanned = scan_roots(only or docroots)
+    old = load().get('files', [])
+    keep = [f for f in old if (only and not under(f, scanned)) or under(f, partial)]
+    files = sorted(set(files) | set(keep))
     save(files)
     util.log('htaccess scan: %d files in %.1fs' % (len(files), time.time() - t0))
     return files
@@ -887,16 +915,22 @@ def build(docroot, files, cache=None, include_dirs=None, include_texts=None, php
     if include_dirs or include_texts:
         build_includes(res, include_dirs, docroot, include_texts)
     root = os.path.realpath(docroot).rstrip('/')
-    mine = sorted(f for f in files if (f == root + '/.htaccess' or f.startswith(root + '/')) and safe_path(f))
+    mine = sorted(f for f in files if (f == root + '/.htaccess' or f.startswith(root + '/')) and is_htaccess(f))
+    try:
+        owners = {0, os.stat(root).st_uid}
+    except OSError:
+        owners = {0}
     parsed = {}
     for f in mine:
         try:
-            st = os.stat(f)
+            st = os.lstat(f)
         except OSError:
             continue
-        key = (f, st.st_mtime_ns, st.st_size)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid not in owners:
+            continue
+        key = (f, st.st_mtime_ns, st.st_size, st.st_ino)
         if key not in cache:
-            cache[key] = parse_file(f)
+            cache[key] = parse_file(f, owners)
         parsed[os.path.dirname(f)] = cache[key]
     if not parsed:
         return res

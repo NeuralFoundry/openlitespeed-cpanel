@@ -28,7 +28,7 @@ def save(data):
 
 
 def wp_version(path):
-    text = util.read_text(os.path.join(path, 'wp-includes/version.php'), '') or ''
+    text = util.read_user_file(os.path.join(path, 'wp-includes/version.php'), 1 << 20, canonical=False)
     m = re.search(r"\$wp_version\s*=\s*'([^']+)'", text)
     return m.group(1) if m else ''
 
@@ -85,7 +85,8 @@ def wp(site, args, timeout=240):
         cmd = ['/usr/sbin/runuser', '-u', user, '--'] + cmd
     env = {'HOME': home, 'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C', 'WP_CLI_CACHE_DIR': home + '/.wp-cli/cache'}
     try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=env, cwd=site['path'])
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                           start_new_session=True, timeout=timeout, env=env, cwd=site['path'])
         return p.returncode, p.stdout.decode('utf-8', 'replace').strip()
     except subprocess.TimeoutExpired:
         return 124, 'timeout'

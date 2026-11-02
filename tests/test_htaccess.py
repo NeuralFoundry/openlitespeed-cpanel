@@ -150,6 +150,12 @@ class ReviewFixesTest(unittest.TestCase):
         self.assertIn(kv('enable', 0), body)
         self.assertNotIn('RewriteRule', body)
 
+    def test_php_admin_values_are_refused(self):
+        self.t.htaccess('', 'php_admin_value open_basedir none\nphp_value memory_limit 256M\n')
+        vht = render.htaccess.build(self.t.docroot, self.t.files(), {}, None, [], 'ea-php83')
+        self.assertEqual(vht.php_root, ['php_value memory_limit 256M'])
+        self.assertTrue(any('php_admin_value' in i for _p, issues in vht.report for i in issues))
+
     def test_files_match_with_dropped_directives_is_reported(self):
         self.t.htaccess('', '<FilesMatch "\\.(php)$">\nHeader set A b\nSetHandler none\n</FilesMatch>\n')
         conf, vht = self.render()

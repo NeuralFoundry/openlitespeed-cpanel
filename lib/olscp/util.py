@@ -1,6 +1,7 @@
 import fcntl
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import time
@@ -23,6 +24,33 @@ def read_text(path, default=None):
             return f.read()
     except OSError:
         return default
+
+
+def read_user_file(path, limit=4 << 20, owners=None, default='', canonical=True):
+    try:
+        if canonical and os.path.realpath(path) != os.path.abspath(path):
+            return default
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
+    except OSError:
+        return default
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit or (owners is not None and st.st_uid not in owners):
+            return default
+        chunks, size = [], 0
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > limit:
+                return default
+            chunks.append(chunk)
+        return b''.join(chunks).decode('utf-8', 'replace')
+    except OSError:
+        return default
+    finally:
+        os.close(fd)
 
 
 def write_atomic(path, data, mode=0o644, owner=None):
@@ -78,9 +106,10 @@ def save_settings(values):
     return s
 
 
-def run(args, timeout=120, env=None, cwd=None):
+def run(args, timeout=120, env=None, cwd=None, data=None):
     p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
-                       env=env, cwd=cwd)
+                       env=env, cwd=cwd, input=data, stdin=None if data is not None else subprocess.DEVNULL,
+                       start_new_session=True)
     return p.returncode, p.stdout.decode('utf-8', 'replace')
 
 

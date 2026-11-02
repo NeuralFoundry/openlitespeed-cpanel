@@ -139,6 +139,8 @@ class Watcher(object):
         self.pending_conf = 0.0
         self.pending_ht = 0.0
         self.pending_scan = 0.0
+        self.scan_paths = set()
+        self.home_roots = {}
         self.first = 0.0
         self.last_restart = 0.0
         self.last_full = 0.0
@@ -157,9 +159,9 @@ class Watcher(object):
         if not path.endswith('/.htaccess') or path in self.known or not htaccess.safe_path(path):
             return
         real = os.path.realpath(path)
-        if not any(real == r + '/.htaccess' or real.startswith(r + '/') for r in self.roots):
+        if real != path or not htaccess.regular(path):
             return
-        if not os.path.isfile(real):
+        if not any(real == r + '/.htaccess' or real.startswith(r + '/') for r in self.roots):
             return
         self.known.add(path)
         if htaccess.add_files([real]):
@@ -211,7 +213,13 @@ class Watcher(object):
                 self.ino.add(d, 'pw')
         self.known = set(htaccess.load().get('files', []))
         try:
-            self.roots = sorted({os.path.realpath(vh.docroot).rstrip('/') for vh in cpanel.load_state().vhosts if vh.docroot})
+            vhosts = cpanel.load_state().vhosts
+            self.roots = sorted({os.path.realpath(vh.docroot).rstrip('/') for vh in vhosts if vh.docroot})
+            homes = {}
+            for vh in vhosts:
+                if vh.homedir and vh.docroot:
+                    homes.setdefault(os.path.realpath(vh.homedir).rstrip('/'), set()).add(vh.docroot)
+            self.home_roots = homes
         except Exception:
             pass
 
@@ -246,7 +254,10 @@ class Watcher(object):
         try:
             self.settings = util.load_settings()
             if scan:
-                res, _n = sync.rescan_htaccess(restart=True, reason='watch-scan')
+                paths, self.scan_paths = self.scan_paths, set()
+                roots = sorted({r for h, rs in self.home_roots.items()
+                                if any(p == h or p.startswith(h + '/') for p in paths) for r in rs})
+                res, _n = sync.rescan_htaccess(restart=True, reason='watch-scan', roots=roots or None)
                 self.last_scan = time.time()
             else:
                 res = sync.sync(restart=True, reason='watch-htaccess' if ht and not conf else 'watch',
@@ -292,6 +303,7 @@ class Watcher(object):
                         self.pending_conf = now
                     elif c == 'scan':
                         self.pending_scan = now
+                        self.scan_paths.add(path)
                     else:
                         self.pending_ht = now
                     if mask & IN_ISDIR and mask & (IN_CREATE | IN_MOVED_TO) and kind in ('conf', 'pw'):

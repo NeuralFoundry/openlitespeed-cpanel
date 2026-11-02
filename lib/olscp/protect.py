@@ -8,7 +8,8 @@ import time
 from . import const, cpanel, util
 
 BLOCKED = const.STATE + '/blocked.json'
-LINE = re.compile(r'^(\S+) \S+ \S+ \[[^\]]*\] "(\S+) (\S+)[^"]*" \d+ \S+ "[^"]*" "([^"]*)"')
+LINE = re.compile(r'^(\S+) \S+ \S+ \[[^\]]*\] "(\S+) ([^ "]+)(?: [^"]*)?" \d+ \S+ "(?:[^"\\]|\\.)*" "((?:[^"\\]|\\.)*)"')
+MAX_LINE = 8192
 WP_PATH = re.compile(r'/(wp-login|xmlrpc)\.php(?:\?|$)')
 MAX_READ = 4 * 1048576
 WINDOW = 60
@@ -114,6 +115,8 @@ class Protector(object):
             except OSError:
                 continue
             for line in self._lines(e.path, size):
+                if len(line) > MAX_LINE:
+                    continue
                 m = LINE.match(line)
                 if not m:
                     continue
