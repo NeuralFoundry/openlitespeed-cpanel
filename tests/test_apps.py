@@ -113,9 +113,37 @@ class AppsTest(unittest.TestCase):
         a = found[0]
         self.assertEqual((a['uri'], a['type'], a['mode'], a['env_mode']), ('/api/', 'node', 'development', 0))
         self.assertEqual(a['binary'], self.t.node)
-        self.assertIn('not found', a['note'])
+        self.assertEqual(a['note'], 'instead of /opt/cpanel/ea-nodejs10/bin/node')
         self.assertIn('TOKEN=abc', a['env'])
         self.assertEqual(vht.report, [])
+
+    def test_application_manager_python_with_all_binaries(self):
+        root = self.t.app('shop', ['passenger_wsgi.py'])
+        bogus = self.t.exe('python-html2text')
+        text = APP_MANAGER.format(root=root).replace(
+            'PassengerNodejs /opt/cpanel/ea-nodejs10/bin/node',
+            'PassengerRuby /usr/bin/ruby\n        PassengerPython %s\n'
+            '        PassengerNodejs %s' % (bogus, self.t.node))
+        vht = self.t.build([('std/shop.conf', text), ('ssl/shop.conf', text)])
+        found, issues = self.resolve(vht)
+        self.assertEqual(issues, [])
+        self.assertEqual([(a['uri'], a['type'], a['binary']) for a in found], [('/api/', 'wsgi', self.t.python)])
+
+    def test_duplicate_includes_report_once(self):
+        root = self.t.app('empty', [])
+        text = APP_MANAGER.format(root=root)
+        found, issues = self.resolve(self.t.build([('std/a.conf', text), ('ssl/a.conf', text)]))
+        self.assertEqual((found, len(issues)), ([], 1))
+
+    def test_binary_name_is_checked(self):
+        root = self.t.app('api', ['app.js'])
+        bogus = self.t.exe('python-html2text')
+        text = APP_MANAGER.format(root=root).replace('PassengerNodejs /opt/cpanel/ea-nodejs10/bin/node',
+                                                     'PassengerPython %s\n        PassengerAppType wsgi' % bogus)
+        self.t.write(os.path.join(root, 'passenger_wsgi.py'), '')
+        found, issues = self.resolve(self.t.build([('api.conf', text)]))
+        self.assertEqual(issues, [])
+        self.assertEqual(found[0]['binary'], self.t.python)
 
     def test_htaccess_disabled(self):
         root = self.t.app('nodeapp', ['server.js'])

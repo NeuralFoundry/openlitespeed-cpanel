@@ -26,6 +26,8 @@ SAFE_PATH = re.compile(r'^/[A-Za-z0-9._@+=,~/-]*$')
 SAFE_URI = re.compile(r'^/(?:[A-Za-z0-9._~@+=,-]+/)*$')
 SAFE_FILE = re.compile(r'^[A-Za-z0-9._@+=,~-]+(?:/[A-Za-z0-9._@+=,~-]+)*$')
 ENV_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$')
+BINARY_NAME = {'node': re.compile(r'^(node|nodejs)[0-9.]*$'), 'python': re.compile(r'^python[0-9.]*$'),
+               'ruby': re.compile(r'^ruby[0-9.]*$')}
 NODE_MAX_CONNS = 100
 WSGI_MAX_CONNS = 10
 
@@ -62,6 +64,9 @@ class Spec(object):
     def set_env(self, name, value):
         self.env = [(n, v) for n, v in self.env if n != name] + [(name, value)]
 
+    def target(self):
+        return norm_uri(self.values['uri']) if self.values.get('uri') else self.uri
+
     def mounted(self):
         base = self.values.get('uri')
         return not (self.nested and base and norm_uri(base) != self.uri)
@@ -86,13 +91,15 @@ def find_binary(kind):
     else:
         found = ['/usr/bin/ruby', '/usr/local/bin/ruby']
     for p in found:
-        if usable(p):
+        if usable(p, kind):
             return p
     return ''
 
 
-def usable(path):
-    return bool(path) and bool(SAFE_PATH.match(path)) and os.path.isfile(path) and os.access(path, os.X_OK)
+def usable(path, kind):
+    if not path or not SAFE_PATH.match(path) or not BINARY_NAME[kind].match(os.path.basename(path)):
+        return False
+    return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
 def inside(path, base):
@@ -104,12 +111,14 @@ def detect_type(v, root):
     raw = (v.get('type') or '').lower()
     if raw:
         return TYPES.get(raw), raw
-    for key, kind in (('node', 'node'), ('python', 'wsgi'), ('ruby', 'rack')):
-        if key in v:
-            return kind, ''
-    for kind, name in (('rack', 'config.ru'), ('wsgi', 'passenger_wsgi.py'), ('node', 'app.js'), ('node', 'package.json')):
+    for kind, name in (('rack', 'config.ru'), ('wsgi', 'passenger_wsgi.py'), ('node', 'app.js')):
         if os.path.isfile(os.path.join(root, name)):
             return kind, ''
+    given = [kind for key, kind in (('node', 'node'), ('python', 'wsgi'), ('ruby', 'rack')) if key in v]
+    if len(given) == 1:
+        return given[0], ''
+    if os.path.isfile(os.path.join(root, 'package.json')):
+        return 'node', ''
     return None, ''
 
 
@@ -161,10 +170,10 @@ def resolve(spec, home, defaults=None):
         return None, '%s: %s is missing' % (where, starter)
     key = BINARY_KEY[kind]
     wanted = v.get(key) or defaults.get(key) or ''
-    binary = wanted if usable(wanted) else find_binary(key)
+    binary = wanted if usable(wanted, key) else find_binary(key)
     if not binary:
         return None, '%s: no usable %s binary%s' % (where, LABEL[kind], ' (%s)' % wanted if wanted else '')
-    note = '%s not found, using %s' % (wanted, binary) if wanted and binary != wanted else ''
+    note = 'instead of %s' % wanted if wanted and binary != wanted else ''
     mode = (v.get('mode') or defaults.get('mode') or 'production').lower()
     if not re.match(r'^[a-z0-9_-]{1,32}$', mode):
         mode = 'production'
@@ -195,6 +204,10 @@ def resolve_all(specs, home, defaults=None):
     apps, issues, seen = [], [], set()
     off = str((defaults or {}).get('disable_htaccess', '')).lower() == 'on'
     for spec in specs:
+        if spec.is_app() and spec.mounted():
+            if spec.target() in seen:
+                continue
+            seen.add(spec.target())
         if off and spec.directory and spec.is_app() and spec.mounted():
             issues.append('%s: Passenger directives in .htaccess are disabled by PassengerDisableHtaccess' % spec.source)
             continue
@@ -204,8 +217,7 @@ def resolve_all(specs, home, defaults=None):
             app, issue = None, '%s: %s' % (spec.source, e)
         if issue:
             issues.append(issue)
-        if app and app['uri'] not in seen:
-            seen.add(app['uri'])
+        if app:
             apps.append(app)
     return apps, issues
 
