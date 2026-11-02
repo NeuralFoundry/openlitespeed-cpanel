@@ -28,10 +28,21 @@ The generated configuration is in `/usr/local/olscp/ws/conf/`, the olscp log in 
 | `lib/olscp/render.py` | Writes the OpenLiteSpeed configuration |
 | `lib/olscp/htaccess.py` | `.htaccess` and Apache directive translation |
 | `lib/olscp/apacheconf.py` | Apache configuration parser |
+| `lib/olscp/apps.py` | Node.js and Python applications from Passenger settings |
+| `libexec/lswsgi.py` | WSGI server for Python applications |
+| `tests/` | Unit tests |
 | `whm/` | WHM plugin, Perl CGI and Template Toolkit |
 | `cpanel/` | cPanel plugin and AdminBin |
 | `libexec/`, `hooks/`, `systemd/` | httpd wrapper, OpenLiteSpeed installer, EasyApache hook, watcher service |
 | `build/` | OpenLiteSpeed build script and patches |
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+The tests run without cPanel. Add a test for every translated directive and every fixed bug.
 
 ## Changing the OpenLiteSpeed patch
 

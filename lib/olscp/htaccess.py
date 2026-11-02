@@ -5,7 +5,7 @@ import re
 import shlex
 import time
 
-from . import const, util
+from . import apps, const, util
 
 STATE = const.STATE + '/htaccess.json'
 SKIP_DIRS = {'.git', '.svn', '.hg', 'node_modules', '.trash', '.cagefs', '.cpanel', '.cache', '.npm', '.composer'}
@@ -34,7 +34,7 @@ IGNORED = {
     'passenv', 'limitrequestbody', 'indexoptions', 'indexignore', 'headername', 'readmename',
     'addicon', 'addiconbytype', 'addiconbyencoding', 'adddescription', 'defaulticon', 'ssilegacyexprparser',
     'secfilterengine', 'secfilterscanpost', 'authbasicprovider', 'satisfy', 'expiresactive', 'rewritemap',
-    'cgipassauth', 'xbithack', 'mergeslashes', 'acceptpathinfo', 'suphp_configpath', 'passengerenabled',
+    'cgipassauth', 'xbithack', 'mergeslashes', 'acceptpathinfo', 'suphp_configpath',
 }
 UNIT = {'year': 31536000, 'month': 2592000, 'week': 604800, 'day': 86400, 'hour': 3600, 'minute': 60, 'second': 1}
 
@@ -141,6 +141,8 @@ class Ht(object):
         self.envs = {}
         self.aliases = []
         self.headers = []
+        self.app = {'values': [], 'env': []}
+        self.app_locations = []
 
 
 def split_args(s):
@@ -297,6 +299,7 @@ class Parser(object):
         self.ht = Ht(path)
         self.include = include
         self.lines = self._logical(text)
+        self.target = self.ht.app
 
     @staticmethod
     def _logical(text):
@@ -365,7 +368,9 @@ class Parser(object):
                     fs = Scope()
                     fl = new_legacy()
                     fr = []
+                    saved, self.target = self.target, None
                     self._block(i + 1, end, fs, False, fl, fr)
+                    self.target = saved
                     self._finish(fs, fl, fr)
                     if fs.access or fs.auth_require:
                         self.ht.files.append((pat, regex, fs))
@@ -381,7 +386,13 @@ class Parser(object):
                     ls = Scope()
                     ll = new_legacy()
                     lr = []
+                    saved, self.target = self.target, {'values': [], 'env': []}
                     self._block(i + 1, end, ls, False, ll, lr)
+                    if self.target['values']:
+                        self.ht.app_locations.append((pat, regex, self.target))
+                    elif self.target['env']:
+                        self.ht.unsupported.append('SetEnv')
+                    self.target = saved
                     self._finish(ls, ll, lr)
                     if ls.access or ls.auth_require:
                         self.ht.locations.append((pat, regex, ls))
@@ -389,7 +400,9 @@ class Parser(object):
                         self.ht.unsupported.append('<%s> without access rules' % m.group(2))
                 elif tag == 'directory' and self.include:
                     ds = Scope()
+                    saved, self.target = self.target, None
                     self._block(i + 1, end, ds, False, new_legacy(), [])
+                    self.target = saved
                     if ds.indexes is not None:
                         self.ht.directories.append((apache_unquote(arg).rstrip('/'), ds.indexes))
                 elif tag == 'directorymatch' and self.include:
@@ -466,12 +479,23 @@ class Parser(object):
                     var = spec.split('=', 1)[0]
                     if not var.startswith('!'):
                         ht.envs.setdefault(var, []).append((attr, args[1], name.endswith('nocase')))
-        elif name == 'setenv' and top:
+        elif apps.is_directive(name):
+            if self.target is not None:
+                self.target['values'].append((name, split_args(rest)))
+        elif name == 'setenv':
             args = split_args(rest)
+            if args and self.target is not None:
+                self.target['env'].append((args[0], args[1] if len(args) > 1 else ''))
+            if not top:
+                if self.target is None:
+                    ht.unsupported.append('SetEnv')
+                return
             if args and re.match(r'^[A-Za-z0-9_]+$', args[0]) and (len(args) == 1 or re.match(r'^[^\s\]\[,]*$', args[1])):
                 scope.pre_rules.append('RewriteRule .* - [E=%s:%s]' % (args[0], args[1] if len(args) > 1 else ''))
-            else:
+            elif not ht.app['values']:
                 ht.unsupported.append('SetEnv')
+        elif name == 'sslrequiressl':
+            scope.pre_rules.extend(['RewriteCond %{HTTPS} !on', 'RewriteRule .* - [F]'])
         elif name == 'addtype':
             args = split_args(rest)
             if len(args) >= 2:
@@ -719,6 +743,18 @@ class VhostHt(object):
         self.vhost_rules = []
         self.vhost_headers = []
         self.aliases = []
+        self.app_specs = []
+        self.apps = []
+        self.app_issues = []
+
+
+def app_spec(path, uri, data, directory=None, nested=False):
+    spec = apps.Spec(path, uri, directory, nested)
+    for name, args in data['values']:
+        spec.add(name, args)
+    for name, value in data['env']:
+        spec.set_env(name, value)
+    return spec
 
 
 def include_files(dirs):
@@ -766,6 +802,13 @@ def build_includes(res, include_dirs, docroot, texts=None):
         res.redirects.extend(ht.redirects)
         res.vhost_headers.extend(h for h in sc.headers if h not in res.vhost_headers)
         res.aliases.extend(ht.aliases)
+        if ht.app['values']:
+            res.app_specs.append(app_spec(path, '/', ht.app))
+        for pat, is_regex, data in ht.app_locations:
+            if is_regex:
+                res.report.append((path, ['Passenger application in <LocationMatch>']))
+            elif pat.startswith('/'):
+                res.app_specs.append(app_spec(path, pat, data))
         for code, url in ht.errors.items():
             res.errors.setdefault(code, url)
         unsup = sorted(set(ht.unsupported) - {'Options'})
@@ -820,7 +863,9 @@ def build(docroot, files, cache=None, include_dirs=None, include_texts=None):
         return '/' if d == root else '/' + os.path.relpath(d, root).replace(os.sep, '/') + '/'
 
     policy_dirs = {d for d, ht in parsed.items() if ht.scope.has_policy()}
-    need = set()
+    need = {d for d, ht in parsed.items() if ht.app['values']}
+    for d in sorted(need):
+        res.app_specs.append(app_spec(parsed[d].path, uri_of(d), parsed[d].app, d, d != root))
     for d in parsed:
         if any(p == d or d.startswith(p + '/') for p in policy_dirs):
             need.add(d)

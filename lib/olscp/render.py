@@ -5,7 +5,7 @@ import os
 import pwd
 import re
 
-from . import const, htaccess, util
+from . import apps, const, htaccess, util
 
 LOG_FORMAT = '%h %l %u %t "%r" %>s %b "%{Referer}i" "%{User-Agent}i"'
 SERVICE_BACKENDS = [
@@ -24,6 +24,7 @@ MODSEC_MAIN = '/etc/apache2/conf.d/modsec2.conf'
 REDIRECT_PATHS = 'cpanel|controlpanel|kpanel|securecontrolpanel|securecpanel|whm|securewhm'
 AUTOINDEX_URI = '/_autoindex/default.php'
 DEFAULT_DENIED = [r'^(\.ht(access|passwds?)|\.user\.ini|php\.ini)$', '^error_log$']
+WELL_KNOWN = r'exp:^/\.well-known/'
 
 
 def autoindex_on(state, settings, vht=None):
@@ -303,6 +304,11 @@ def proxy_rules(state):
     return rules
 
 
+def passenger_defaults(state):
+    g = apache_global(state)
+    return dict(getattr(g, 'passenger', None) or {}) if g else {}
+
+
 def global_headers(state):
     g = apache_global(state)
     out = []
@@ -314,6 +320,8 @@ def global_headers(state):
 
 
 def render_vhost(vh, state, settings, vht, live=False):
+    vht.apps, vht.app_issues = apps.resolve_all(vht.app_specs, vh.homedir, passenger_defaults(state))
+    app_by_uri = {a['uri']: a for a in vht.apps}
     vb = Block()
     vb.kv('docRoot', vh.docroot)
     vb.kv('vhDomain', vh.name)
@@ -382,6 +390,9 @@ def render_vhost(vh, state, settings, vht, live=False):
         seen.add(fc['uri'])
         c = vb.block('context ' + fc['uri'])
         policy_lines(c, fc['scope'], fc.get('realm'))
+    if '/' in app_by_uri and WELL_KNOWN not in seen:
+        seen.add(WELL_KNOWN)
+        vb.block('context ' + WELL_KNOWN).kv('allowBrowse', 1)
 
     headers = global_headers(state) + vht.vhost_headers
     cgi_uris = {(url if url.endswith('/') else url + '/'): path for url, path in vh.cgi}
@@ -396,23 +407,31 @@ def render_vhost(vh, state, settings, vht, live=False):
         if headers:
             scope = htaccess.with_headers(scope, headers)
         c = vb.block('context ' + ctx['uri'])
-        c.kv('location', ctx['location'])
+        app = app_by_uri.pop(ctx['uri'], None)
+        if app:
+            apps.context(c, app)
+        else:
+            c.kv('location', ctx['location'])
         policy_lines(c, scope, ctx.get('realm'), browse=1)
         mime = {}
         for k, v in ctx.get('mime', []):
             mime[k] = mime[k] + ', ' + v if k == 'addMIMEType' and k in mime else v
         for k in sorted(mime):
             c.kv(k, mime[k])
-        if lsapi and ctx['php']:
+        if lsapi and ctx['php'] and not app:
             c.block('phpIniOverride').raw('\n'.join(ctx['php']))
         inline = list(ctx.get('pre_rules', []))
-        if not live:
+        if not live or app:
             inline += [l for l in ctx['rewrite'] if not l.lower().startswith('rewriteengine')]
         if inline:
             r = c.block('rewrite')
-            if not live:
+            if not live or app:
                 r.kv('enable', 1)
             r.heredoc('rules', inline)
+    for uri in sorted(app_by_uri):
+        c = vb.block('context ' + uri)
+        apps.context(c, app_by_uri[uri])
+        policy_lines(c, htaccess.with_headers(htaccess.Scope(), headers), browse=1)
 
     own = [(u.rstrip('/') + '/', p.rstrip('/') + '/', cg) for u, p, cg in vht.aliases
            if u.startswith('/') and os.path.isdir(p)]
@@ -426,6 +445,16 @@ def render_vhost(vh, state, settings, vht, live=False):
             c.kv('type', 'cgi')
         c.kv('location', path)
         c.kv('allowBrowse', 1)
+
+    taken = done | set(cgi_uris) | {ctx['uri'] for ctx in contexts} | {a['uri'] for a in vht.apps}
+    for app in vht.apps:
+        for uri, path in apps.static_dirs(app, vh.docroot):
+            if uri in taken or uri == '/cgi-sys/':
+                continue
+            taken.add(uri)
+            c = vb.block('context ' + uri)
+            c.kv('location', path)
+            c.kv('allowBrowse', 1)
 
     c = vb.block('context /cgi-sys/')
     c.kv('type', 'cgi')
@@ -842,18 +871,21 @@ def render_all(state, settings, ht_files=None, live=False):
     files[const.OLS_CONF] = server
     cache = {}
     report = {}
+    app_info = {}
     for vh in vhosts:
         vht = htaccess.build(vh.docroot, ht_files or [], cache, vh.custom_includes, vh.custom_text)
         if vht.report:
             report[vh.name] = vht.report
         files[os.path.join(const.OLS_VHOST_DIR, vh.name + '.conf')] = render_vhost(vh, state, settings, vht, live)
+        if vht.apps or vht.app_issues:
+            app_info[vh.name] = {'user': vh.user, 'docroot': vh.docroot, 'apps': vht.apps, 'issues': vht.app_issues}
     files[os.path.join(const.OLS_VHOST_DIR, DEFAULT_VHOST + '.conf')] = render_default_vhost(state, settings)
     admin = admin_config(settings)
     if admin:
         files[const.OLS_ADMIN_CONF] = admin
     if modsec_enabled(settings):
         files[MODSEC_RULES] = modsec_rules()
-    return files, {'skipped': skipped, 'duplicates': dupes, 'vhosts': len(vhosts), 'htaccess': report}
+    return files, {'skipped': skipped, 'duplicates': dupes, 'vhosts': len(vhosts), 'htaccess': report, 'apps': app_info}
 
 
 def conf_owner():

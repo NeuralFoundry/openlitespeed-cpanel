@@ -358,6 +358,12 @@ def options_indexes(args):
     return val
 
 
+PASSENGER_GLOBAL = {
+    'passengernodejs': 'node', 'passengerpython': 'python', 'passengerruby': 'ruby', 'passengerappenv': 'mode',
+    'passengerdisablehtaccess': 'disable_htaccess',
+}
+
+
 class Global(object):
     def __init__(self):
         self.timeout = None
@@ -374,6 +380,7 @@ class Global(object):
         self.remoteip_header = ''
         self.server_tokens = ''
         self.unsupported = []
+        self.passenger = {}
 
     def as_dict(self):
         return {
@@ -382,7 +389,7 @@ class Global(object):
             'indexes': self.indexes, 'denied_files': [d[0] for d in self.denied_files],
             'headers': self.headers, 'aliases': [{'url': a, 'path': p, 'cgi': c} for a, p, c in self.aliases],
             'proxies': [{'path': a, 'url': u} for a, u in self.proxies], 'trusted_proxies': self.trusted_proxies,
-            'remoteip_header': self.remoteip_header,
+            'remoteip_header': self.remoteip_header, 'passenger': self.passenger,
         }
 
 
@@ -445,6 +452,8 @@ def global_info(root):
             g.remoteip_header = a[0]
         elif k in ('remoteiptrustedproxy', 'remoteipinternalproxy'):
             g.trusted_proxies.extend(a)
+        elif k in PASSENGER_GLOBAL and a:
+            g.passenger[PASSENGER_GLOBAL[k]] = a[0]
         elif k == 'directory' and a and a[0].rstrip('/') in ('', '/home'):
             for o in c.find('Options'):
                 v = options_indexes(o.args)

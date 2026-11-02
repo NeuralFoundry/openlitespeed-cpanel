@@ -53,7 +53,7 @@ my %SETTINGS = (
     cgroups                => 'bool',
 );
 
-my %PAGES = map { $_ => 1 } qw(home sites stats cache quic htaccess apache security limits php version settings logs);
+my %PAGES = map { $_ => 1 } qw(home sites apps stats cache quic htaccess apache security limits php version settings logs);
 my %ALIAS = ( modsec => 'security', cpanel => 'cache' );
 
 my %APACHE_TITLES = (
@@ -306,6 +306,13 @@ if ( $method eq 'POST' && $action ) {
         my $ip = $FORM{'ip'} // '';
         $res = $ip =~ /^[0-9a-fA-F:.]{3,45}$/ ? olscp( 'blocked', 'unblock', $ip ) : { error => 'bad ip' };
     }
+    elsif ( $action eq 'app_restart' ) {
+        my $vh  = $FORM{'vhost'} // '';
+        my $uri = $FORM{'uri'}   // '';
+        $res = ( $vh =~ /^[A-Za-z0-9._-]{1,253}$/ && $uri =~ m{^/[A-Za-z0-9._~\@+=,/-]{0,255}$} )
+          ? olscp( 'apps', 'restart', '--vhost', $vh, '--uri', $uri )
+          : { error => 'bad application' };
+    }
     elsif ( $action eq 'unblock_all' ) {
         $res = olscp( 'blocked', 'clear' );
     }
@@ -378,6 +385,9 @@ elsif ( $page eq 'stats' ) {
 }
 elsif ( $page eq 'sites' ) {
     $data{'sites'} = olscp('vhosts');
+}
+elsif ( $page eq 'apps' ) {
+    $data{'apps'} = olscp('apps');
 }
 elsif ( $page eq 'cache' ) {
     $data{'cache'} = olscp( 'cache', 'list' );

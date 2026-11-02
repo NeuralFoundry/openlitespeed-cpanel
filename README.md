@@ -13,6 +13,7 @@ Website: [openlitespeed.dev/cpanel-whm](https://openlitespeed.dev/cpanel-whm/)
 - `.htaccess` support: rewrite rules, Directory Privacy, Require/Allow/Deny, headers, expires, redirects, error pages, MIME types, `SetEnvIf` bot blocking, `php_value`
 - Live `.htaccess`: rewrite changes apply within a second without a restart (optional patched build)
 - PHP through cPanel PHP-FPM pools or LSAPI per account, detached so restarts keep OPcache
+- Node.js and Python applications from cPanel Application Manager and the CloudLinux selectors, started by OpenLiteSpeed as the account user
 - LSCache with per-site storage, WordPress cache management and a cPanel plugin for end users
 - ModSecurity with the cPanel/OWASP rule sets
 - WordPress brute-force protection, bot rate limiting and cgroups v2 resource limits per user or package
@@ -66,9 +67,20 @@ The build installs the compiler toolchain with `dnf` and fetches the OpenLiteSpe
 | `olscp restart` | Regenerate the configuration and restart gracefully |
 | `olscp apache report` | Settings read from the Apache configuration |
 | `olscp htaccess report` | `.htaccess` directives that could not be applied |
+| `olscp apps` / `olscp apps restart --vhost example.com --uri /` | Node.js and Python applications / restart one |
 | `olscp cache list` / `olscp cache purge --all` | LSCache sites / purge |
 | `olscp ols versions` / `olscp ols upgrade` | OpenLiteSpeed version and upgrade |
 | `olscp settings key=value --apply` | Change a setting |
+
+## Node.js and Python applications
+
+olscp reads the Passenger settings that cPanel Application Manager writes to the Apache configuration and that the CloudLinux Node.js and Python selectors write to `.htaccess`: `PassengerAppRoot`, `PassengerBaseURI`, `PassengerAppType`, `PassengerStartupFile`, `PassengerNodejs`, `PassengerPython`, `PassengerAppEnv` and `SetEnv`. Each application runs as the account user and is started on the first request.
+
+- Node.js applications run through the OpenLiteSpeed Node.js starter. Calls to `listen()` are redirected to the socket OpenLiteSpeed gives the application.
+- Python applications run through `libexec/lswsgi.py`, a small WSGI server that works with any Python 3.6 or newer interpreter or virtual environment. The startup file must define `application` (default `passenger_wsgi.py`).
+- Touch `tmp/restart.txt` in the application root or use **WHM > Plugins > OpenLiteSpeed > Apps** to restart an application.
+- Subdirectories of the document root under the application URI are served as static files, as with Passenger. `/.well-known/` stays reachable for AutoSSL.
+- The application root must be inside the account home directory. When the Apache configuration has `PassengerDisableHtaccess on`, which is the cPanel default, Passenger settings in `.htaccess` are ignored.
 
 ## Uninstall
 
@@ -79,7 +91,8 @@ bash uninstall.sh --purge  # also delete /usr/local/olscp, settings, cache and l
 
 ## Limitations
 
-- Not translated from `.htaccess`: `<If>`, `Require host/expr`, `SSLRequireSSL`, `AuthType Digest`, header-only `<FilesMatch>`.
+- Not translated from `.htaccess`: `<If>`, `Require host/expr`, `AuthType Digest`, header-only `<FilesMatch>`.
+- Ruby (Rack) applications are not supported yet.
 - Directory listing is not available for sites on PHP-FPM, because cPanel FPM pools restrict `doc_root`. It works with LSAPI.
 - Clients without SNI on dedicated IPs receive the server certificate.
 

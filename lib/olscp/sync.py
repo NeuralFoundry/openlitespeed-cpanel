@@ -165,7 +165,8 @@ def sync(restart=False, reason='manual', force_restart=False, overrides=None):
             'live_htaccess': live,
             'apache_vhosts': len([v for v in state.vhosts if v.source == 'apache']),
         }
-        write_status({'last_sync': result, 'htaccess_report': info['htaccess'], 'apache_report': apache_report(state)})
+        write_status({'last_sync': result, 'htaccess_report': info['htaccess'], 'apache_report': apache_report(state),
+                      'apps': info['apps']})
         util.log('sync reason=%s changed=%d removed=%d restart=%s ok=%s' % (reason, len(changed), len(removed), did_restart, ok))
         return result
 

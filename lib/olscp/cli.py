@@ -267,6 +267,35 @@ def cmd_cpanel_plugin(args):
         out({'installed': cpplugin.installed()}, args.json)
 
 
+def cmd_apps(args):
+    from . import apps
+    data = sync.read_status().get('apps') or {}
+    rows, issues = [], []
+    for vhost in sorted(data):
+        d = data[vhost]
+        for a in d.get('apps', []):
+            rows.append(dict(a, vhost=vhost, user=d.get('user', '')))
+        for i in d.get('issues', []):
+            issues.append({'vhost': vhost, 'issue': i})
+    if args.action == 'restart':
+        uri = apps.norm_uri(args.uri) if args.uri else None
+        targets = [r for r in rows if r['vhost'] == args.vhost and (uri is None or r['uri'] == uri)]
+        if not targets:
+            raise RuntimeError('no matching application')
+        out({'restarted': [apps.restart(r) for r in targets]}, args.json)
+        return
+    counts = apps.running(rows) if rows else {}
+    for r in rows:
+        r['processes'] = counts.get(r['root'].rstrip('/'), 0)
+    if args.json:
+        out({'apps': rows, 'issues': issues}, True)
+        return
+    for r in rows:
+        print('%-36s %-16s %-8s %-3d %s' % (r['vhost'], r['uri'], apps.LABEL[r['type']], r['processes'], r['root']))
+    for i in issues:
+        print('%s: %s' % (i['vhost'], i['issue']))
+
+
 def cmd_modsec(args):
     from . import render
     settings = util.load_settings()
@@ -317,6 +346,10 @@ def main(argv=None):
     cp = sp.add_parser('cpanel-plugin')
     cp.add_argument('action', choices=['install', 'uninstall', 'status'])
     sp.add_parser('modsec')
+    am = sp.add_parser('apps')
+    am.add_argument('action', nargs='?', default='list', choices=['list', 'restart'])
+    am.add_argument('--vhost')
+    am.add_argument('--uri')
     sp.add_parser('stats')
     li = sp.add_parser('limits')
     li.add_argument('action', choices=['show', 'set', 'apply'])
@@ -379,6 +412,8 @@ def main(argv=None):
             cmd_cpanel_plugin(args)
         elif args.cmd == 'modsec':
             cmd_modsec(args)
+        elif args.cmd == 'apps':
+            cmd_apps(args)
         elif args.cmd == 'stats':
             cmd_stats(args)
         elif args.cmd == 'limits':
