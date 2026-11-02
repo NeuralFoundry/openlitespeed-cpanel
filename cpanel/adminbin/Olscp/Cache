@@ -14,6 +14,10 @@ sub _actions { return qw(PURGE) }
 sub PURGE {
     my ( $self, $domain ) = @_;
     my $user = $self->get_caller_username();
+    if ( eval { require Cpanel::Features::Check; 1 } ) {
+        my $on = eval { Cpanel::Features::Check::check_feature_for_user( $user, 'olscp_cache' ) };
+        die "the LiteSpeed Cache feature is not available for this account\n" if defined $on && !$on;
+    }
     die "invalid domain\n" unless defined $domain && $domain =~ /\A[A-Za-z0-9._-]{1,253}\z/;
     my $pid = open( my $fh, '-|' );
     die "fork failed\n" unless defined $pid;

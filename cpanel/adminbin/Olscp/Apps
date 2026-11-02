@@ -13,6 +13,15 @@ __PACKAGE__->run( alarm => 120 ) if !caller;
 
 sub _actions { return qw(LIST RESTART) }
 
+sub _require_feature {
+    my ($self) = @_;
+    my $user = $self->get_caller_username();
+    return unless eval { require Cpanel::Features::Check; 1 };
+    my $on = eval { Cpanel::Features::Check::check_feature_for_user( $user, 'olscp_apps' ) };
+    die "the Application Status feature is not available for this account\n" if defined $on && !$on;
+    return;
+}
+
 sub _olscp {
     my @args = @_;
     my $pid  = open( my $fh, '-|' );
@@ -32,11 +41,13 @@ sub _olscp {
 
 sub LIST {
     my ($self) = @_;
+    $self->_require_feature();
     return _olscp( 'apps', 'list', '--user', $self->get_caller_username() );
 }
 
 sub RESTART {
     my ( $self, $vhost, $uri ) = @_;
+    $self->_require_feature();
     die "invalid domain\n"      unless defined $vhost && $vhost =~ /\A[A-Za-z0-9._-]{1,253}\z/;
     die "invalid application\n" unless defined $uri   && $uri   =~ m{\A/[A-Za-z0-9._~\@+=,/-]{0,255}\z};
     return _olscp( 'apps', 'restart', '--user', $self->get_caller_username(), '--vhost', $vhost, '--uri', $uri );

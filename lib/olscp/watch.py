@@ -31,6 +31,7 @@ EVENT = struct.Struct('iIII')
 QUIET = 2.0
 MAX_WAIT = 15.0
 MIN_RESTART_GAP = 5.0
+SCAN_GAP = 30.0
 FULL_SYNC_EVERY = 600
 
 _libc = ctypes.CDLL(ctypes.util.find_library('c') or 'libc.so.6', use_errno=True)
@@ -249,8 +250,17 @@ class Watcher(object):
             return
         if now - self.last_restart < MIN_RESTART_GAP:
             return
-        conf, ht, scan = self.pending_conf, self.pending_ht, self.pending_scan
-        self.pending_conf = self.pending_ht = self.pending_scan = self.first = 0.0
+        scan = self.pending_scan
+        if scan and now - self.last_scan < SCAN_GAP:
+            if not (self.pending_conf or self.pending_ht):
+                return
+            scan = 0.0
+        conf, ht = self.pending_conf, self.pending_ht
+        self.pending_conf = self.pending_ht = 0.0
+        if scan:
+            self.pending_scan = 0.0
+        if not self.pending_scan:
+            self.first = 0.0
         try:
             self.settings = util.load_settings()
             if scan:
