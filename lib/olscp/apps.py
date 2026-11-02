@@ -1,6 +1,8 @@
 import glob
 import os
+import pwd
 import re
+import signal
 
 from . import const, util
 
@@ -12,8 +14,9 @@ KEYS = {
     'passengerapproot': 'root', 'passengerbaseuri': 'uri', 'passengerapptype': 'type',
     'passengerstartupfile': 'startup', 'passengernodejs': 'node', 'passengerpython': 'python',
     'passengerruby': 'ruby', 'passengerappenv': 'mode', 'railsenv': 'mode', 'rackenv': 'mode',
-    'passengerenabled': 'enabled',
+    'passengerenabled': 'enabled', 'passengerapplogfile': 'log',
 }
+RESERVED_ENV = {'LSNODE_ROOT', 'LSNODE_SOCKET', 'LSNODE_STARTUP_FILE', 'LSNODE_BIND_SOCKET', 'LS_STDERR_LOG'}
 APP_KEYS = ('root', 'uri', 'type', 'startup', 'node', 'python', 'ruby')
 TYPES = {'node': 'node', 'nodejs': 'node', 'wsgi': 'wsgi', 'python': 'wsgi', 'rack': 'rack', 'ruby': 'rack',
          'rails': 'rack'}
@@ -58,6 +61,10 @@ class Spec(object):
 
     def set_env(self, name, value):
         self.env = [(n, v) for n, v in self.env if n != name] + [(name, value)]
+
+    def mounted(self):
+        base = self.values.get('uri')
+        return not (self.nested and base and norm_uri(base) != self.uri)
 
     def is_app(self):
         if (self.values.get('enabled') or 'on').lower() == 'off':
@@ -111,9 +118,9 @@ def resolve(spec, home, defaults=None):
     v = spec.values
     if not spec.is_app():
         return None, None
-    base = v.get('uri')
-    if spec.nested and base and norm_uri(base) != spec.uri:
+    if not spec.mounted():
         return None, None
+    base = v.get('uri')
     uri = norm_uri(base) if base else spec.uri
     where = '%s (%s)' % (uri, spec.source)
     if not SAFE_URI.match(uri):
@@ -163,9 +170,10 @@ def resolve(spec, home, defaults=None):
         mode = 'production'
     env = []
     for name, value in spec.env:
-        if ENV_NAME.match(name) and clean_value(value) and not name.startswith(('LSNODE_', 'OLSCP_')):
+        if ENV_NAME.match(name) and clean_value(value) and name not in RESERVED_ENV and not name.startswith('OLSCP_'):
             env.append('%s=%s' % (name, value))
     env.append('PASSENGER_APP_ENV=%s' % mode)
+    env.append('LS_STDERR_LOG=%s' % log_file(v.get('log'), real, home_real))
     if kind == 'wsgi':
         env.append('OLSCP_APP_URI=%s' % uri)
     return {
@@ -175,11 +183,19 @@ def resolve(spec, home, defaults=None):
     }, None
 
 
+def log_file(wanted, root, home):
+    if wanted and wanted.startswith('/'):
+        path = os.path.join(os.path.realpath(os.path.dirname(wanted)), os.path.basename(wanted))
+        if SAFE_PATH.match(path) and inside(path, home) and os.path.isdir(os.path.dirname(path)):
+            return path
+    return root + '/stderr.log'
+
+
 def resolve_all(specs, home, defaults=None):
     apps, issues, seen = [], [], set()
     off = str((defaults or {}).get('disable_htaccess', '')).lower() == 'on'
     for spec in specs:
-        if off and spec.directory and spec.is_app():
+        if off and spec.directory and spec.is_app() and spec.mounted():
             issues.append('%s: Passenger directives in .htaccess are disabled by PassengerDisableHtaccess' % spec.source)
             continue
         try:
@@ -232,23 +248,39 @@ def context(c, app):
     return c
 
 
-def running(apps):
-    counts = {a['root'].rstrip('/'): 0 for a in apps}
+def processes():
     for pid in os.listdir('/proc'):
         if not pid.isdigit():
             continue
         try:
             with open('/proc/%s/environ' % pid, 'rb') as f:
                 env = f.read()
+            uid = os.stat('/proc/%s' % pid).st_uid
         except OSError:
             continue
         m = re.search(rb'(?:^|\0)LSNODE_ROOT=([^\0]*)', env)
-        if not m:
-            continue
-        r = os.path.realpath(m.group(1).decode('utf-8', 'replace')).rstrip('/')
-        if r in counts:
-            counts[r] += 1
+        if m:
+            yield int(pid), uid, os.path.realpath(m.group(1).decode('utf-8', 'replace')).rstrip('/')
+
+
+def running(apps):
+    counts = {a['root'].rstrip('/'): 0 for a in apps}
+    for _pid, _uid, root in processes():
+        if root in counts:
+            counts[root] += 1
     return counts
+
+
+def stop(app):
+    uid = pwd.getpwnam(app['user']).pw_uid
+    root = app['root'].rstrip('/')
+    found = [pid for pid, owner, r in processes() if owner == uid and r == root and pid != os.getpid()]
+    for pid in found:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    return len(found)
 
 
 def restart(app):
@@ -257,4 +289,5 @@ def restart(app):
                         'sh', tmp], timeout=30)
     if rc != 0:
         raise RuntimeError('restart of %s%s failed: %s' % (app['vhost'], app['uri'], out.strip()[:200]))
+    stop(app)
     return app['vhost'] + app['uri']

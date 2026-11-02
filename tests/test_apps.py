@@ -1,7 +1,7 @@
 import os
 import unittest
 
-from helpers import Tree, apps, htaccess, render_vhost
+from helpers import Tree, apps, htaccess, render, render_vhost
 
 CLOUDLINUX_NODE = '''# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
 PassengerAppRoot "{root}"
@@ -14,6 +14,7 @@ PassengerStartupFile server.js
 <IfModule Litespeed>
 SetEnv API_URL https://api.example.com
 SetEnv LSNODE_ROOT /tmp
+SetEnv LS_STDERR_LOG /tmp/x.log
 SetEnv BROKEN "value {{"
 </IfModule>
 # DO NOT REMOVE OR MODIFY. CLOUDLINUX ENV VARS CONFIGURATION END
@@ -75,16 +76,21 @@ class AppsTest(unittest.TestCase):
         self.assertEqual(a['binary'], self.t.node)
         self.assertEqual(a['root'], root + '/')
         self.assertIn('API_URL=https://api.example.com', a['env'])
+        self.assertIn('LS_STDERR_LOG=%s/stderr.log' % root, a['env'])
         self.assertFalse(any(e.startswith(('LSNODE_ROOT', 'BROKEN')) for e in a['env']))
 
     def test_cloudlinux_python_sub_uri(self):
         root = self.t.app('shop', ['passenger_wsgi.py'])
-        self.t.htaccess('shop', CLOUDLINUX_PYTHON.format(root=root, python=self.t.python))
+        os.makedirs(os.path.join(self.t.home, 'logs'))
+        self.t.htaccess('shop', CLOUDLINUX_PYTHON.format(root=root, python=self.t.python) +
+                        'PassengerAppLogFile "%s/logs/shop.log"\n' % self.t.home)
         found, issues = self.resolve(self.t.build())
         self.assertEqual(issues, [])
         a = found[0]
         self.assertEqual((a['uri'], a['type'], a['startup']), ('/shop/', 'wsgi', 'passenger_wsgi.py'))
         self.assertIn('OLSCP_APP_URI=/shop/', a['env'])
+        self.assertIn('LS_STDERR_LOG=%s/logs/shop.log' % self.t.home, a['env'])
+        self.assertEqual(apps.log_file('/etc/x.log', root, self.t.home), root + '/stderr.log')
 
     def test_nested_app_of_other_vhost_is_ignored(self):
         root = self.t.app('sub', ['passenger_wsgi.py'])
@@ -147,7 +153,7 @@ class AppsTest(unittest.TestCase):
                      kv('env', 'API_URL=https://api.example.com')):
             self.assertIn(line, block)
         self.assertEqual(conf.count('context / {'), 1)
-        self.assertIn('context exp:^/\\.well-known/ {', conf)
+        self.assertIn('context %s {' % render.WELL_KNOWN, conf)
         self.assertIn('context /static/ {', conf)
 
     def test_render_python_app(self):
@@ -158,7 +164,19 @@ class AppsTest(unittest.TestCase):
         for line in (kv('binPath', '%s %s' % (self.t.python, self.t.lswsgi)), kv('appType', 'node'),
                      kv('maxConns', apps.WSGI_MAX_CONNS)):
             self.assertIn(line, block)
-        self.assertNotIn('context exp:^/\\.well-known/', conf)
+        self.assertNotIn('context %s' % render.WELL_KNOWN, conf)
+
+    def test_app_context_does_not_inherit_rewrite(self):
+        root = self.t.app('api', ['app.js'])
+        self.t.htaccess('', 'RewriteEngine On\nRewriteRule . /index.php [L]\n')
+        conf = render_vhost(self.t, self.t.build([('api.conf', APP_MANAGER.format(root=root))]))
+        block = conf.split('context /api/ {', 1)[1].split('\n}', 1)[0]
+        self.assertIn('rewrite {\n    ' + kv('enable', 0), block)
+
+    def test_disabled_htaccess_ignores_other_vhost(self):
+        root = self.t.app('sub', ['passenger_wsgi.py'])
+        self.t.htaccess('sub.example.com', 'PassengerAppRoot "%s"\nPassengerBaseURI "/"\n' % root)
+        self.assertEqual(self.resolve(self.t.build(), {'disable_htaccess': 'on'}), ([], []))
 
     def test_static_dirs_skip_app_inside_docroot(self):
         root = self.t.app('public_html/inner', ['server.js'])
@@ -200,6 +218,25 @@ class HtaccessTest(unittest.TestCase):
     def test_setenv_in_files_is_reported(self):
         ht = htaccess.Parser('/x/.htaccess', '<Files "a.php">\nSetEnv A b\n</Files>\n').parse()
         self.assertIn('SetEnv', ht.unsupported)
+
+
+class SyncTest(unittest.TestCase):
+    def test_app_changes(self):
+        from olscp import sync
+        old = {'a.com': {'apps': [{'uri': '/'}]}, 'b.com': {'apps': [{'uri': '/x/'}]}, 'd.com': {'issues': ['x']}}
+        new = {'a.com': {'apps': [{'uri': '/'}]}, 'c.com': {'apps': [{'uri': '/'}]}}
+        self.assertEqual(sync.app_changes(old, new), ['b.com', 'c.com'])
+
+    def test_app_updates(self):
+        from olscp import sync
+        a = {'uri': '/', 'root': '/home/a/app/', 'type': 'node', 'startup': 'app.js', 'binary': '/usr/bin/node',
+             'mode': 'production', 'env': ['A=1']}
+        old = {'a.com': {'user': 'a', 'apps': [a]}}
+        same = {'a.com': {'user': 'a', 'apps': [dict(a)]}}
+        mode = {'a.com': {'user': 'a', 'apps': [dict(a, mode='development')]}}
+        self.assertEqual(sync.app_updates(old, same), [])
+        self.assertEqual([(x['vhost'], x['user'], x['uri']) for x in sync.app_updates(old, mode)], [('a.com', 'a', '/')])
+        self.assertEqual(sync.app_updates({}, mode), [])
 
 
 if __name__ == '__main__':

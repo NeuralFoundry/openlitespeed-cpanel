@@ -4,6 +4,7 @@
 
 - Node.js and Python applications from cPanel Application Manager and the CloudLinux Node.js and Python selectors run on OpenLiteSpeed
 - New WSGI server for Python applications, `libexec/lswsgi.py`
+- Applications restart when their settings change, and the LSCache storage of a site is purged when an application is added or removed
 - WHM plugin: Apps page with application state and restart
 - New command `olscp apps`
 - `SSLRequireSSL` in `.htaccess` is translated

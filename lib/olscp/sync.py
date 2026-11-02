@@ -85,6 +85,26 @@ def prepare_modsec(settings):
             os.chmod(p, 0o660)
 
 
+def app_changes(old, new):
+    def uris(d):
+        return sorted(a['uri'] for a in (d or {}).get('apps', []))
+    return sorted(v for v in set(old) | set(new) if render.SAFE_NAME.match(v) and uris(old.get(v)) != uris(new.get(v)))
+
+
+APP_FIELDS = ('root', 'type', 'startup', 'binary', 'mode', 'env')
+
+
+def app_updates(old, new):
+    out = []
+    for vhost, data in sorted(new.items()):
+        before = {a['uri']: a for a in (old.get(vhost) or {}).get('apps', [])}
+        for a in data.get('apps', []):
+            b = before.get(a['uri'])
+            if b and any(b.get(k) != a.get(k) for k in APP_FIELDS):
+                out.append(dict(a, vhost=vhost, user=data.get('user', '')))
+    return out
+
+
 def config_errors(since):
     return [e for e in server.recent_errors(since) if '[ERROR]' in e and (
         '[PlainConf]' in e or 'Fatal error' in e or 'failed to start listener' in e)]
@@ -100,6 +120,9 @@ def sync(restart=False, reason='manual', force_restart=False, overrides=None):
         ht_files = htaccess.load().get('files', [])
         live = olsbuild.live()
         files, info = render.render_all(state, settings, ht_files, live)
+        old_apps = read_status().get('apps') or {}
+        moved = app_changes(old_apps, info['apps'])
+        updated = app_updates(old_apps, info['apps'])
         previous = {p: util.read_text(p) for p in files}
         if os.path.isdir(const.OLS_VHOST_DIR):
             for f in os.listdir(const.OLS_VHOST_DIR):
@@ -146,6 +169,18 @@ def sync(restart=False, reason='manual', force_restart=False, overrides=None):
                     server.systemd_reattach()
                 ok = False
             errors = server.recent_errors(t0)
+        if moved and settings.get('cache_module', True):
+            from . import wpcache
+            wpcache.purge(moved)
+            util.log('cache purged after application change: %s' % ', '.join(moved))
+        if updated:
+            from . import apps
+            for app in updated:
+                try:
+                    apps.stop(app)
+                    util.log('application restarted after configuration change: %s%s' % (app['vhost'], app['uri']))
+                except Exception as e:
+                    util.log('application restart failed: %s' % e, 'WARN')
         result = {
             'time': int(time.time()),
             'reason': reason,

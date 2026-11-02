@@ -23,8 +23,8 @@ MODSEC_RULES = const.OLS_ROOT + '/conf/olscp-modsec.conf'
 MODSEC_MAIN = '/etc/apache2/conf.d/modsec2.conf'
 REDIRECT_PATHS = 'cpanel|controlpanel|kpanel|securecontrolpanel|securecpanel|whm|securewhm'
 AUTOINDEX_URI = '/_autoindex/default.php'
-DEFAULT_DENIED = [r'^(\.ht(access|passwds?)|\.user\.ini|php\.ini)$', '^error_log$']
-WELL_KNOWN = r'exp:^/\.well-known/'
+DEFAULT_DENIED = [r'^(\.ht(access|passwds?)|\.user\.ini|php\.ini)$', r'^(error_log|stderr\.log)$']
+WELL_KNOWN = r'exp:^/\.well-known/.*'
 
 
 def autoindex_on(state, settings, vht=None):
@@ -428,10 +428,13 @@ def render_vhost(vh, state, settings, vht, live=False):
             if not live or app:
                 r.kv('enable', 1)
             r.heredoc('rules', inline)
+        elif app:
+            c.block('rewrite').kv('enable', 0)
     for uri in sorted(app_by_uri):
         c = vb.block('context ' + uri)
         apps.context(c, app_by_uri[uri])
         policy_lines(c, htaccess.with_headers(htaccess.Scope(), headers), browse=1)
+        c.block('rewrite').kv('enable', 0)
 
     own = [(u.rstrip('/') + '/', p.rstrip('/') + '/', cg) for u, p, cg in vht.aliases
            if u.startswith('/') and os.path.isdir(p)]
@@ -864,6 +867,7 @@ def admin_config(settings):
 
 
 def render_all(state, settings, ht_files=None, live=False):
+    htaccess.reset_modules()
     files = {}
     vhosts = [vh for vh in state.vhosts if SAFE_NAME.match(vh.name) and vh.docroot and vh.user]
     skipped = [vh.name for vh in state.vhosts if vh not in vhosts]

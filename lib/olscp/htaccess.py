@@ -155,6 +155,10 @@ def split_args(s):
 _present = []
 
 
+def reset_modules():
+    _present[:] = []
+
+
 def present_modules():
     if not _present:
         try:

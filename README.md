@@ -74,11 +74,12 @@ The build installs the compiler toolchain with `dnf` and fetches the OpenLiteSpe
 
 ## Node.js and Python applications
 
-olscp reads the Passenger settings that cPanel Application Manager writes to the Apache configuration and that the CloudLinux Node.js and Python selectors write to `.htaccess`: `PassengerAppRoot`, `PassengerBaseURI`, `PassengerAppType`, `PassengerStartupFile`, `PassengerNodejs`, `PassengerPython`, `PassengerAppEnv` and `SetEnv`. Each application runs as the account user and is started on the first request.
+olscp reads the Passenger settings that cPanel Application Manager writes to the Apache configuration and that the CloudLinux Node.js and Python selectors write to `.htaccess`: `PassengerAppRoot`, `PassengerBaseURI`, `PassengerAppType`, `PassengerStartupFile`, `PassengerNodejs`, `PassengerPython`, `PassengerAppEnv`, `PassengerAppLogFile` and `SetEnv`. Each application runs as the account user, is started on the first request and keeps running through server restarts.
 
 - Node.js applications run through the OpenLiteSpeed Node.js starter. Calls to `listen()` are redirected to the socket OpenLiteSpeed gives the application.
 - Python applications run through `libexec/lswsgi.py`, a small WSGI server that works with any Python 3.6 or newer interpreter or virtual environment. The startup file must define `application` (default `passenger_wsgi.py`).
-- Touch `tmp/restart.txt` in the application root or use **WHM > Plugins > OpenLiteSpeed > Apps** to restart an application.
+- Touch `tmp/restart.txt` in the application root or use **WHM > Plugins > OpenLiteSpeed > Apps** to restart an application. Changed settings restart it automatically.
+- Output goes to `stderr.log` in the application root, or to `PassengerAppLogFile` when it is inside the home directory.
 - Subdirectories of the document root under the application URI are served as static files, as with Passenger. `/.well-known/` stays reachable for AutoSSL.
 - The application root must be inside the account home directory. When the Apache configuration has `PassengerDisableHtaccess on`, which is the cPanel default, Passenger settings in `.htaccess` are ignored.
 
