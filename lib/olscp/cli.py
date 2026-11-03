@@ -347,8 +347,16 @@ def main(argv=None):
     s.add_argument('--restart', action='store_true')
     h = sp.add_parser('httpd')
     h.add_argument('action', choices=['start', 'restart', 'graceful', 'stop', 'graceful-stop'])
-    for name in ('enable', 'disable', 'reapply', 'watch', 'vhosts', 'restart'):
+    for name in ('disable', 'reapply', 'watch', 'vhosts', 'restart'):
         sp.add_parser(name)
+    en = sp.add_parser('enable')
+    en.add_argument('--no-verify', dest='verify', action='store_false')
+    en.add_argument('--no-rollback', dest='rollback', action='store_false')
+    en.set_defaults(verify=True, rollback=True)
+    dr = sp.add_parser('dry-run')
+    dr.add_argument('--offset', type=int, default=8000)
+    hc = sp.add_parser('healthcheck')
+    hc.add_argument('--offset', type=int, default=0)
     st = sp.add_parser('settings')
     st.add_argument('set', nargs='*')
     st.add_argument('--apply', action='store_true')
@@ -416,7 +424,11 @@ def main(argv=None):
         elif args.cmd == 'httpd':
             return cmd_httpd(args)
         elif args.cmd == 'enable':
-            out(switch.enable(), args.json)
+            out(switch.enable(verify=args.verify, rollback=args.rollback), args.json)
+        elif args.cmd == 'dry-run':
+            out(switch.dry_run(offset=args.offset), args.json)
+        elif args.cmd == 'healthcheck':
+            out(switch.healthcheck_now(offset=args.offset), args.json)
         elif args.cmd == 'disable':
             out(switch.disable(), args.json)
         elif args.cmd == 'reapply':

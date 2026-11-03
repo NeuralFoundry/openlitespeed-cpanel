@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+- Safe switch to OpenLiteSpeed: `olscp enable` checks every site over HTTP and HTTPS after the switch and, if a site that worked on Apache fails on OpenLiteSpeed, restores Apache automatically. Pass `olscp enable --no-rollback` to keep OpenLiteSpeed anyway, `--no-verify` to skip the check
+- Dry run: `olscp dry-run` and the **Dry run** button start OpenLiteSpeed on the preview ports and check every site while Apache keeps serving, so you see which sites would break before switching. `olscp healthcheck` checks the sites on the live ports
+- The site checks connect only to the loopback address, send a `HEAD` request with the site as the `Host` header and read only the status line, with a per-site timeout and an overall time budget
+- HTTP/3 (QUIC) can be turned off for named domains while it stays on for the rest, with the new **HTTP/3 off (domains)** setting
+- Statistics show the cache hit ratio per server and per domain, and the in-use size of the PHP and application pools
+- MultiPHP: a domain whose PHP version is set to one that is not installed is reported in the warnings and falls back to the server default, instead of silently serving the default
+
 ## 0.6.0
 
 - Ruby (Rack) applications from cPanel Application Manager run through the new Rack server `libexec/lsrack.rb`, with Bundler support

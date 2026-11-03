@@ -32,6 +32,7 @@ my %SETTINGS = (
     proc_hard_limit        => 'int',
     http2                  => 'bool',
     http3                  => 'bool',
+    http3_off              => 'domlist',
     brotli                 => 'bool',
     cache_module           => 'bool',
     htaccess_watch         => 'bool',
@@ -109,6 +110,7 @@ sub valid_setting {
     return $v =~ /^(?:off|block)$/                          if $type eq 'wpmode';
     return $v =~ /^[0-9a-fA-F:.\/, ]{0,2000}$/              if $type eq 'iplist';
     return $v =~ /^[A-Za-z0-9 ._|-]{0,1000}$/               if $type eq 'agents';
+    return $v =~ /^[A-Za-z0-9 .,_*-]{0,4000}$/              if $type eq 'domlist';
     return $v =~ /^\d{1,7}$/                                if $type eq 'int';
     return $v =~ /^\d{1,5}[KMG]?$/                          if $type eq 'size';
     return $v =~ /^(?:0|1)$/                                if $type eq 'bool';
@@ -237,6 +239,7 @@ if ( $method eq 'POST' && $action ) {
     my %simple = (
         enable             => ['enable'],
         disable            => ['disable'],
+        dry_run            => ['dry-run'],
         restart            => ['restart'],
         sync               => [ 'sync', '--restart' ],
         preview_start      => [ 'preview', 'start' ],
@@ -338,7 +341,7 @@ if ( $method eq 'POST' && $action ) {
         for my $k (@keys) {
             my $type = $SETTINGS{$k};
             my $v    = $type eq 'bool' ? ( $FORM{$k} ? 1 : 0 ) : $FORM{$k};
-            next unless defined $v && ( length $v || $type eq 'iplist' || $type eq 'agents' );
+            next unless defined $v && ( length $v || $type eq 'iplist' || $type eq 'agents' || $type eq 'domlist' );
             if ( !valid_setting( $type, $v ) ) {
                 $res = { error => "invalid value: $k" };
                 last;
@@ -358,6 +361,7 @@ if ( $method eq 'POST' && $action ) {
     $result{'error'}  = $err;
     $result{'steps'}  = ref $res eq 'ARRAY' ? [ map { flat($_) } @$res ] : [];
     $result{'action'} = $action;
+    $result{'healthcheck'} = $res if $action eq 'dry_run' && ref $res eq 'HASH' && !$err;
 }
 
 my $status = olscp('status');

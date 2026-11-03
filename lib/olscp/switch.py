@@ -3,7 +3,7 @@ import shutil
 import socket
 import time
 
-from . import cloudlinux, const, olsbuild, server, sync, util
+from . import cloudlinux, const, cpanel, healthcheck, olsbuild, server, sync, util
 
 RESTARTSRV = '/usr/local/cpanel/scripts/restartsrv_httpd'
 WRAPPER_MARK = b'olscp-httpd-wrapper'
@@ -119,11 +119,22 @@ def wait_apache_gone(timeout=20):
     return not apache_pids()
 
 
-def enable():
+def enable(verify=True, rollback=True):
     if not server.installed():
         raise RuntimeError('OpenLiteSpeed is not installed under %s' % const.OLS_ROOT)
     const.ensure_dirs()
     steps = []
+    vhosts = []
+    base = None
+    fresh_switch = not wrapper_installed()
+    if verify:
+        try:
+            vhosts = cpanel.load_state().vhosts
+            if fresh_switch and port_open(80):
+                base = healthcheck.probe_all(vhosts, 80, 443)
+                steps.append('baseline: %d/%d sites ok on Apache' % (base['healthy'], base['total']))
+        except Exception as e:
+            util.log('baseline health probe failed: %s' % e, 'WARN')
     if server.running(server.PREVIEW_PID):
         server.stop(pidfile=server.PREVIEW_PID)
         steps.append('preview stopped')
@@ -146,18 +157,87 @@ def enable():
     steps.append('start rc=%d' % rc)
     if not server.running():
         server.start()
-    probe = http_probe()
     if not server.running():
         util.log('enable failed, reverting to Apache: %s' % out[-2000:], 'ERROR')
         disable()
         raise RuntimeError('OpenLiteSpeed did not start; Apache restored. Output: %s' % out[-1500:])
+    if verify:
+        time.sleep(2.0)
+        after = healthcheck.probe_all(vhosts, 80, 443)
+        if base:
+            regr, basis = healthcheck.recheck(base, after, vhosts), 'baseline'
+        elif fresh_switch:
+            regr, basis = healthcheck.mass_failures(after), 'absolute'
+        else:
+            regr, basis = [], 'none'
+        report = {'baseline': _hc_counts(base), 'after': _hc_counts(after), 'regressions': regr[:200],
+                  'checked_at': int(time.time()), 'verified': bool(base), 'basis': basis}
+        sync.write_status({'healthcheck': report})
+        if rollback and regr:
+            names = ', '.join('%s (%s)' % (r['name'], r['after']) for r in regr[:10])
+            util.log('enable health check failed (%s), %d sites down, rolling back: %s' % (basis, len(regr), names), 'ERROR')
+            try:
+                disable()
+            except Exception as e:
+                util.log('rollback disable() failed: %s' % e, 'ERROR')
+                raise RuntimeError('OpenLiteSpeed health check failed and the automatic rollback to Apache also '
+                                   'failed (%s); run "olscp disable" by hand. Failed sites: %s' % (e, names))
+            raise RuntimeError('rolled back to Apache: %d site(s) failed on OpenLiteSpeed: %s' % (len(regr), names))
+        steps.append('health check (%s): %d/%d sites ok on OpenLiteSpeed' % (basis, after['healthy'], after['total']))
+        if not base and fresh_switch:
+            steps.append('note: Apache baseline unavailable, used absolute check')
+        if regr:
+            steps.append('warning: %d sites unhealthy (rollback off)' % len(regr))
     install_hook()
     systemctl('enable', '--now', UNIT)
     steps.append('watcher enabled')
-    steps.append('probe: %s' % probe)
     sync.write_status({'mode': 'ols', 'switched_at': int(time.time())})
     util.log('enabled OpenLiteSpeed: %s' % '; '.join(steps))
     return steps
+
+
+def dry_run(offset=8000, timeout=6.0):
+    if not server.installed():
+        raise RuntimeError('OpenLiteSpeed is not installed under %s' % const.OLS_ROOT)
+    if sync.active():
+        raise RuntimeError('OpenLiteSpeed is already active; use "olscp healthcheck" instead')
+    if offset < 1000 or offset > 55000:
+        raise RuntimeError('offset out of range')
+    live = server.listening_v4()
+    for p in (80 + offset, 443 + offset):
+        if p in live:
+            raise RuntimeError('port %d is already in use; choose another --offset' % p)
+    const.ensure_dirs()
+    vhosts = cpanel.load_state().vhosts
+    base = healthcheck.probe_all(vhosts, 80, 443, timeout=timeout)
+    res = sync.sync(restart=False, reason='dry-run', overrides={'port_offset': offset})
+    started = (server.graceful(pidfile=server.PREVIEW_PID) if server.running(server.PREVIEW_PID)
+               else server.start(pidfile=server.PREVIEW_PID))
+    try:
+        if not started:
+            errs = server.recent_errors(res['time'] - 2)
+            raise RuntimeError('OpenLiteSpeed preview did not start: %s'
+                               % ('; '.join(errs)[:500] or 'see logs'))
+        time.sleep(1.0)
+        cand = healthcheck.probe_all(vhosts, 80 + offset, 443 + offset, timeout=timeout)
+    finally:
+        server.stop(pidfile=server.PREVIEW_PID)
+        sync.sync(restart=False, reason='dry-run-stop')
+    regr = healthcheck.regressions(base, cand)
+    report = {'baseline': _hc_counts(base), 'after': _hc_counts(cand), 'regressions': regr[:200],
+              'ready': not regr, 'dry_run': True, 'checked_at': int(time.time())}
+    sync.write_status({'healthcheck': report})
+    util.log('dry run: %d sites, apache %d ok, ols %d ok, %d regressions'
+             % (base['total'], base['healthy'], cand['healthy'], len(regr)))
+    return report
+
+
+def healthcheck_now(offset=0, timeout=6.0):
+    vhosts = cpanel.load_state().vhosts
+    r = healthcheck.probe_all(vhosts, 80 + offset, 443 + offset, timeout=timeout)
+    failed = sorted(name for name, v in r['results'].items() if not v.get('ok'))
+    return {'total': r['total'], 'probed': r['probed'], 'healthy': r['healthy'],
+            'unhealthy': r['unhealthy'], 'not_probed': r['not_probed'], 'failed': failed[:200]}
 
 
 def disable():
@@ -219,4 +299,28 @@ def status():
         'live_htaccess': olsbuild.live() and info.get('running', False),
         'ols_build': olsbuild.current(),
         'cloudlinux': cloudlinux.status(util.load_settings()),
+        'healthcheck': health_summary(st.get('healthcheck')),
+    }
+
+
+def _hc_counts(r):
+    if not isinstance(r, dict):
+        return {}
+    return {'total': r.get('total', 0), 'healthy': r.get('healthy', 0),
+            'unhealthy': r.get('unhealthy', 0), 'not_probed': r.get('not_probed', 0)}
+
+
+def health_summary(report):
+    if not isinstance(report, dict):
+        return {}
+    after = report.get('after') or {}
+    regr = report.get('regressions') or []
+    return {
+        'checked_at': report.get('checked_at'),
+        'dry_run': bool(report.get('dry_run')),
+        'total': after.get('total', 0),
+        'healthy': after.get('healthy', 0),
+        'unhealthy': after.get('unhealthy', 0),
+        'regressions': [r.get('name') for r in regr][:50],
+        'regression_count': len(regr),
     }

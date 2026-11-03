@@ -16,7 +16,7 @@
      mem_limit => 'Process memory limit', proc_soft_limit => 'Process limit (soft)', proc_hard_limit => 'Process limit (hard)',
      workers => 'Workers (0 = auto)', max_conns => 'Max connections', keepalive_timeout => 'Keep-alive timeout (s)',
      conn_timeout => 'Connection timeout (s)', max_req_body => 'Max request body',
-     http2 => 'HTTP/2', http3 => 'HTTP/3 (QUIC)', brotli => 'Brotli', ipv6 => 'IPv6 listener',
+     http2 => 'HTTP/2', http3 => 'HTTP/3 (QUIC)', http3_off => 'HTTP/3 off (domains)', brotli => 'Brotli', ipv6 => 'IPv6 listener',
      cache_module => 'LSCache module', modsecurity => 'ModSecurity', autoindex => 'Directory listing', lscwp_version => 'LSCache plugin version',
      htaccess_watch => 'Watch .htaccess files', htaccess_scan_interval => 'Full scan interval (s)',
      webadmin_enabled => 'WebAdmin console', webadmin_listen => 'WebAdmin address', cloudlinux => 'Mode'
@@ -26,7 +26,7 @@
    GROUPS = [
      ['PHP', ['php_mode','lsphp_children','lsphp_max_conns','mem_limit','proc_soft_limit','proc_hard_limit']],
      ['Connections', ['workers','max_conns','keepalive_timeout','conn_timeout','max_req_body']],
-     ['Protocols', ['http2','http3','brotli','ipv6']],
+     ['Protocols', ['http2','http3','http3_off','brotli','ipv6']],
      ['Features', ['cache_module','modsecurity','autoindex','lscwp_version']],
      ['.htaccess', ['htaccess_watch','htaccess_scan_interval']],
      ['CloudLinux', ['cloudlinux']],
@@ -173,7 +173,8 @@
     [% act('restart', 'Restart', 'o-btn pri') %]
     [% act('disable', 'Switch to Apache', 'o-btn', 'Switch the web server back to Apache?') %]
   [% ELSE %]
-    [% act('enable', 'Switch to OpenLiteSpeed', 'o-btn pri', 'Switch the web server to OpenLiteSpeed?') %]
+    [% act('enable', 'Switch to OpenLiteSpeed', 'o-btn pri', 'Switch the web server to OpenLiteSpeed? Every site is checked and the switch rolls back to Apache automatically if any site breaks.') %]
+    [% act('dry_run', 'Dry run', 'o-btn', 'Start OpenLiteSpeed on test ports and check every site? Apache keeps serving your sites the whole time.') %]
   [% END %]
   </div>
 </section>
@@ -189,6 +190,23 @@
 [% END %]
 [% IF data.result.password %]<div class="o-msg info">New WebAdmin password: <code>[% data.result.password | html %]</code></div>[% END %]
 [% IF st.active && st.watcher && st.watcher != 'active' %]<div class="o-msg warn">Watcher is [% st.watcher | html %]</div>[% END %]
+
+[% hc = data.result.healthcheck; IF hc %]
+<section class="o-sec">
+  <div class="o-sec-h"><span class="o-dot [% hc.ready ? 'ok' : 'bad' %]"></span><h2>Dry run result</h2></div>
+  <dl class="o-read">
+    <div><dt>Apache now</dt><dd>[% hc.baseline.healthy || 0 %] / [% hc.baseline.total || 0 %] sites</dd></div>
+    <div><dt>OpenLiteSpeed (test ports)</dt><dd>[% hc.after.healthy || 0 %] / [% hc.after.total || 0 %] sites</dd></div>
+    <div><dt>Verdict</dt><dd>[% IF hc.ready %][% badge('ok', 'Safe to switch') %][% ELSE %][% badge('bad', hc.regressions.size _ ' site(s) would break') %][% END %]</dd></div>
+  </dl>
+  [% IF hc.regressions.size %]
+  <p class="o-sub">These sites respond on Apache but fail on OpenLiteSpeed. The switch rolls back automatically unless you turn rollback off.</p>
+  <div class="o-scroll"><table class="o-t"><thead><tr><th>Site</th><th>On OpenLiteSpeed</th></tr></thead><tbody>
+  [% FOREACH r IN hc.regressions %]<tr><td>[% r.name | html %]</td><td>[% r.after | html %]</td></tr>[% END %]
+  </tbody></table></div>
+  [% END %]
+</section>
+[% END %]
 
 [% SWITCH pg %]
 
@@ -210,8 +228,9 @@
       <div class="o-row"><span class="o-k">Watcher</span><span class="o-v">[% IF st.watcher == 'active' %][% badge('ok', 'Running') %][% ELSE %][% badge('bad', st.watcher || 'Unknown') %][% END %]</span><span class="o-a"><a href="[% base %]?page=logs">Logs</a></span></div>
       [% ELSE %]
       <div class="o-row"><span class="o-k">Preview</span><span class="o-v">[% IF data.preview.running %][% badge('warn', 'Ports 8080/8443') %][% ELSE %][% badge('off', 'Off') %][% END %]</span>
-        <span class="o-a">[% IF data.preview.running %][% act('preview_stop', 'Stop preview') %][% ELSE %][% act('preview_start', 'Start preview') %][% END %]</span></div>
+        <span class="o-a">[% IF data.preview.running %][% act('preview_stop', 'Stop preview') %][% ELSE %][% act('dry_run', 'Dry run') %][% END %]</span></div>
       [% END %]
+      [% h = st.healthcheck; IF h.checked_at %]<div class="o-row"><span class="o-k">Last site check</span><span class="o-v">[% h.healthy || 0 %]/[% h.total || 0 %] responding[% IF h.regression_count %] <span class="o-sub">[% h.regression_count %] failing</span>[% END %] <span class="o-sub">[% IF h.dry_run %]dry run [% END %][% ts(h.checked_at, '%H:%M') %]</span></span><span class="o-a"></span></div>[% END %]
       <div class="o-row"><span class="o-k">Version</span><span class="o-v">[% ols.version | html %][% IF build %] <span class="o-sub">[% build | html %]</span>[% END %]</span><span class="o-a"><a href="[% base %]?page=version">Manage</a></span></div>
       <div class="o-row"><span class="o-k">PHP</span><span class="o-v">[% s.php_mode | upper | html %][% IF s.http3 %] <span class="o-sub">HTTP/3 on</span>[% END %]</span><span class="o-a"><a href="[% base %]?page=php">Versions</a></span></div>
       <div class="o-row"><span class="o-k">WebAdmin console</span><span class="o-v">[% onoff(s.webadmin_enabled) %]</span>
@@ -336,10 +355,12 @@
   <div class="o-tile"><dt>[% m.1 | html %]</dt><dd>[% sv.item(m.0) || 0 %]</dd></div>
   [% END %]
   <div class="o-tile"><dt>In / out KB/s</dt><dd>[% (sv.BPS_IN + sv.SSL_BPS_IN) || 0 %] / [% (sv.BPS_OUT + sv.SSL_BPS_OUT) || 0 %]</dd></div>
+  <div class="o-tile"><dt>Cache hit ratio</dt><dd>[% sv.CACHE_RATIO || 0 %]%</dd></div>
+  [% pl = data.stats.pool; IF pl.size %]<div class="o-tile"><dt>App pool in use</dt><dd>[% pl.inuse || 0 %] / [% pl.size %]</dd></div>[% END %]
 </dl>
-<div class="o-scroll"><table class="o-t"><thead><tr><th>Domain</th><th>Requests/s</th><th>Processing</th><th>Total requests</th><th>Cache hits</th><th>Static hits</th></tr></thead><tbody>
+<div class="o-scroll"><table class="o-t"><thead><tr><th>Domain</th><th>Requests/s</th><th>Processing</th><th>Total requests</th><th>Cache hits</th><th>Cache %</th><th>Static hits</th></tr></thead><tbody>
 [% FOREACH v IN data.stats.vhosts %][% NEXT IF v.name == 'olscp-default' && !v.TOT_REQS %]
-<tr><td class="w">[% v.name | html %]</td><td>[% v.REQ_PER_SEC %]</td><td>[% v.REQ_PROCESSING %]</td><td>[% v.TOT_REQS %]</td><td>[% v.TOTAL_PUB_CACHE_HITS %]</td><td>[% v.TOTAL_STATIC_HITS %]</td></tr>
+<tr><td class="w">[% v.name | html %]</td><td>[% v.REQ_PER_SEC %]</td><td>[% v.REQ_PROCESSING %]</td><td>[% v.TOT_REQS %]</td><td>[% v.TOTAL_PUB_CACHE_HITS %]</td><td>[% v.CACHE_RATIO || 0 %]%</td><td>[% v.TOTAL_STATIC_HITS %]</td></tr>
 [% END %]
 </tbody></table></div>
 [% IF data.stats.apps.size %]
@@ -637,7 +658,7 @@
         [% IF k == 'autoindex' && s.php_mode != 'lsapi' %][% badge('warn', 'Off for PHP-FPM sites') %][% END %]
         [% IF k == 'cloudlinux' %][% CL = st.cloudlinux; IF !CL.lve %][% badge('off', 'Not detected') %][% ELSE %][% badge(CL.mode == 'off' ? 'off' : 'ok', 'In use: ' _ CLMODES.item(CL.mode)) %][% END %][% END %]
       [% ELSIF BOOLS.item(k) %]<input id="s_[% k %]" type="checkbox" name="[% k %]" value="1"[% IF s.item(k) %] checked[% END %]>
-      [% ELSIF k == 'max_req_body' || k == 'mem_limit' || k == 'webadmin_listen' || k == 'lscwp_version' %]<input id="s_[% k %]" type="text" name="[% k %]" value="[% s.item(k) | html %]">
+      [% ELSIF k == 'max_req_body' || k == 'mem_limit' || k == 'webadmin_listen' || k == 'lscwp_version' || k == 'http3_off' %]<input id="s_[% k %]" type="text" name="[% k %]" value="[% s.item(k) | html %]">
       [% ELSE %]<input id="s_[% k %]" type="number" min="0" name="[% k %]" value="[% s.item(k) | html %]">[% END %]
     </div></div>
     [% END %]

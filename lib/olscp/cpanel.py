@@ -224,8 +224,11 @@ def load_state(apache=True):
             vh.owner = data.get('owner') or 'root'
             vh.admin_email = data.get('serveradmin') or ''
             vh.aliases = [a for a in (data.get('serveralias') or '').split() if a and a != name]
-            ver = data.get('phpversion') or ''
-            if not ver or ver == 'inherit' or ver not in st.php_versions:
+            ver = (data.get('phpversion') or '').strip()
+            if ver and ver != 'inherit' and ver not in st.php_versions:
+                st.warnings.append('php %s set for %s is not installed, using %s' % (ver, name, st.default_php))
+                ver = ''
+            if not ver or ver == 'inherit':
                 ver = st.default_php
             vh.php = ver
             if os.path.exists(os.path.join(udir, name + '.php-fpm.yaml')):

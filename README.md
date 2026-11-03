@@ -9,6 +9,7 @@ Website: [openlitespeed.dev/cpanel-whm](https://openlitespeed.dev/cpanel-whm/)
 ## Features
 
 - Works with cPanel as is: accounts, addon, sub and parked domains, AutoSSL, suspensions, MultiPHP, `restartsrv_httpd`, chkservd and EasyApache updates
+- Safe switch: every site is checked over HTTP and HTTPS after the switch, and the server rolls back to Apache automatically if any site that worked on Apache fails on OpenLiteSpeed. A dry run checks every site on the preview ports first, while Apache keeps serving
 - Reads `httpd.conf` and all includes, so custom Apache settings and extra virtual hosts carry over
 - `.htaccess` support: rewrite rules, Directory Privacy, Require/Allow/Deny, headers, expires, redirects, error pages, MIME types, `SetEnvIf` bot blocking, `php_value`, cache headers in `<FilesMatch>` (WP Rocket, W3 Total Cache) and a different PHP version per directory
 - Live `.htaccess`: rewrite changes apply within a second without a restart, with a prebuilt patched binary or one compiled on the server
@@ -18,7 +19,7 @@ Website: [openlitespeed.dev/cpanel-whm](https://openlitespeed.dev/cpanel-whm/)
 - LSCache with per-site storage, WordPress cache management and a cPanel plugin for end users
 - ModSecurity with the cPanel/OWASP rule sets
 - WordPress brute-force protection, bot rate limiting and cgroups v2 resource limits per user or package
-- HTTP/3 (QUIC), Brotli, IPv6, real-time statistics and a preview mode on ports 8080/8443
+- HTTP/3 (QUIC) with a per-domain off list, Brotli, IPv6, real-time statistics with cache hit ratio and application pool use, and a preview mode on ports 8080/8443
 - One-click updates from the WHM plugin
 
 ## Requirements
@@ -37,8 +38,8 @@ bash install.sh
 
 The installer downloads OpenLiteSpeed from the official LiteSpeed repository, verifies it against the pinned GPG keys in `keys/`, installs `lsphp` for every EasyApache PHP version and registers the WHM plugin. Apache keeps serving until you switch.
 
-1. Optional: test OpenLiteSpeed next to Apache with `olscp preview start`, then open your sites on ports 8080 and 8443.
-2. Switch: open **WHM > Plugins > OpenLiteSpeed** and click **Switch to OpenLiteSpeed**, or run `olscp enable`.
+1. Optional dry run: click **Dry run** on the dashboard or run `olscp dry-run`. OpenLiteSpeed starts on ports 8080/8443 and every site is checked while Apache keeps serving; you see which sites, if any, would break.
+2. Switch: open **WHM > Plugins > OpenLiteSpeed** and click **Switch to OpenLiteSpeed**, or run `olscp enable`. Every site is checked after the switch and the server rolls back to Apache automatically if any site that worked on Apache fails. Use `olscp enable --no-rollback` to keep OpenLiteSpeed even when some sites fail.
 3. To go back to Apache at any time: `olscp disable`.
 
 Servers that cannot reach `rpms.litespeedtech.com` can install from a local package:

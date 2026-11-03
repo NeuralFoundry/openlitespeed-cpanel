@@ -49,6 +49,22 @@ def read():
     for k in ('MAXCONN', 'MAXSSL_CONN', 'AVAILCONN', 'AVAILSSL'):
         if k in server and files:
             server[k] = server[k] // len(files) if isinstance(server[k], int) else server[k]
+    for v in vhosts.values():
+        v['CACHE_RATIO'] = _ratio(v)
+    server['CACHE_RATIO'] = _ratio(server)
+    pool = {'inuse': 0, 'idle': 0, 'size': 0}
+    for a in apps.values():
+        pool['inuse'] += a.get('INUSE_CONN', 0)
+        pool['idle'] += a.get('IDLE_CONN', 0)
+        pool['size'] += a.get('POOL_SIZE', 0)
     top = sorted(({'name': k, **v} for k, v in vhosts.items()), key=lambda r: (-r.get('REQ_PER_SEC', 0), -r.get('TOT_REQS', 0)))
-    return {'version': version, 'uptime': uptime, 'workers': len(files), 'server': server,
+    return {'version': version, 'uptime': uptime, 'workers': len(files), 'server': server, 'pool': pool,
             'vhosts': top, 'apps': [{'name': k, **v} for k, v in sorted(apps.items())], 'blocked': sorted(blocked)}
+
+
+def _ratio(d):
+    total = d.get('TOT_REQS', 0)
+    if not total:
+        return 0
+    hits = d.get('TOTAL_PUB_CACHE_HITS', 0) + d.get('TOTAL_PRIVATE_CACHE_HITS', 0)
+    return min(100, round(100 * hits / total))

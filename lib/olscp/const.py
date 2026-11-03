@@ -73,6 +73,7 @@ DEFAULT_SETTINGS = {
     'proc_hard_limit': 500,
     'http2': True,
     'http3': False,
+    'http3_off': '',
     'brotli': True,
     'webadmin_listen': '127.0.0.1:7080',
     'webadmin_enabled': False,

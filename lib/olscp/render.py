@@ -139,7 +139,18 @@ def norm_domain(d):
     return d
 
 
-def ssl_block(parent, cert, settings, head='vhssl', key=None, chain=None):
+def http3_off_names(settings):
+    off = settings.get('http3_off') or ''
+    return {d.strip().lower() for d in re.split(r'[\s,]+', off) if d.strip()}
+
+
+def http3_for(name, settings):
+    if not settings.get('http3'):
+        return False
+    return (name or '').lower() not in http3_off_names(settings)
+
+
+def ssl_block(parent, cert, settings, head='vhssl', key=None, chain=None, quic=None):
     b = parent.block(head) if head else parent
     b.kv('keyFile', key or cert)
     b.kv('certFile', cert)
@@ -154,7 +165,8 @@ def ssl_block(parent, cert, settings, head='vhssl', key=None, chain=None):
     if not settings.get('http2'):
         b.kv('enableSpdy', 0)
     if head is not None:
-        b.kv('enableQuic', 1 if settings.get('http3') else 0)
+        on = settings.get('http3') if quic is None else quic
+        b.kv('enableQuic', 1 if on else 0)
     b.kv('enableStapling', 0)
     return b
 
@@ -615,7 +627,8 @@ def render_vhost(vh, state, settings, vht, live=False):
     vht.report.extend(header_contexts(vb, vht, rendered, prefixes, headers, lsapi, types, seen))
 
     if vh.ssl_cert:
-        ssl_block(vb, vh.ssl_cert, settings, key=vh.ssl_key, chain=vh.ssl_chain)
+        ssl_block(vb, vh.ssl_cert, settings, key=vh.ssl_key, chain=vh.ssl_chain,
+                  quic=http3_for(vh.name, settings))
     return vb.render() + '\n'
 
 
