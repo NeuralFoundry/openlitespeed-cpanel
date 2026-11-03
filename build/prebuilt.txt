@@ -1,2 +1,2 @@
-el8 x86_64 1.9.4 f80f08a2c2175276d27ae24573a2eb2ac6385a6052f1d09e27065da6905c45ee https://github.com/NeuralFoundry/openlitespeed-cpanel/releases/download/v0.6.0/openlitespeed-1.9.4-olscp-el8-x86_64.gz
-el9 x86_64 1.9.4 65e5aca38ebc24baecc7b298fbbccfc64a5632fb97393abda12ed38a9a89c9b5 https://github.com/NeuralFoundry/openlitespeed-cpanel/releases/download/v0.6.0/openlitespeed-1.9.4-olscp-el9-x86_64.gz
+el8 x86_64 1.9.4 f80f08a2c2175276d27ae24573a2eb2ac6385a6052f1d09e27065da6905c45ee https://github.com/NeuralFoundry/openlitespeed-cpanel/releases/download/v0.7.0/openlitespeed-1.9.4-olscp-el8-x86_64.gz
+el9 x86_64 1.9.4 65e5aca38ebc24baecc7b298fbbccfc64a5632fb97393abda12ed38a9a89c9b5 https://github.com/NeuralFoundry/openlitespeed-cpanel/releases/download/v0.7.0/openlitespeed-1.9.4-olscp-el9-x86_64.gz
