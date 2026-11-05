@@ -1,3 +1,5 @@
+**English** | [Türkçe](docs/i18n/README.tr.md) | [简体中文](docs/i18n/README.zh-CN.md) | [Español](docs/i18n/README.es.md) | [Português](docs/i18n/README.pt-BR.md) | [Русский](docs/i18n/README.ru.md) | [日本語](docs/i18n/README.ja.md) | [Deutsch](docs/i18n/README.de.md) | [Français](docs/i18n/README.fr.md) | [한국어](docs/i18n/README.ko.md) | [Bahasa Indonesia](docs/i18n/README.id.md)
+
 # OpenLiteSpeed for cPanel and WHM
 
 Website: [openlitespeed.dev/cpanel-whm](https://openlitespeed.dev/cpanel-whm/)
