@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2
+
+- Installation works on EL10 (AlmaLinux 10 and compatible). Before, `install.sh` stopped at the OpenLiteSpeed step because the crypto policy of EL10 rejects the legacy LiteSpeed signing key
+- The system libraries that the OpenLiteSpeed package needs (`libxcrypt-compat`, `libnsl`) are installed when they are missing. Before, OpenLiteSpeed and WebAdmin could not start on a minimal EL9 or EL10 system
+- On EL10 OpenLiteSpeed runs with the official binary; the prebuilt live `.htaccess` binary is available for EL8 and EL9
+
 ## 0.7.1
 
 - PHP settings changed in the cPanel MultiPHP INI Editor now take effect. Before, WordPress and other sites could keep showing the default 2 MB upload limit
