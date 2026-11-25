@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.3
+
+- The patched OpenLiteSpeed build (`olscp ols build` and the **Build** button) compiles on EL10. Before, GCC 14 rejected the old configure tests of the bundled udns library and the build stopped
+- The prebuilt live `.htaccess` binary is now also available for EL10, so `olscp ols fetch` works there without compiling
+
 ## 0.7.2
 
 - Installation works on EL10 (AlmaLinux 10 and compatible). Before, `install.sh` stopped at the OpenLiteSpeed step because the crypto policy of EL10 rejects the legacy LiteSpeed signing key
