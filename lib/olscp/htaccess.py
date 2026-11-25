@@ -18,6 +18,7 @@ PRESENT_MODULES = {
     'authz_host', 'authz_groupfile', 'version', 'ssl', 'lsapi', 'litespeed', 'http2', 'negotiation',
     'include', 'cgi', 'cgid', 'suexec', 'unique_id', 'remoteip', 'proxy', 'proxy_fcgi', 'proxy_http',
 }
+LSAPI_MODULES = {'lsapi', 'litespeed'}
 REWRITE = {'rewriteengine', 'rewritebase', 'rewritecond', 'rewriterule', 'rewriteoptions'}
 PHP_INI = {'php_value', 'php_flag', 'php_admin_value', 'php_admin_flag'}
 SETENVIF = {'setenvif', 'setenvifnocase', 'browsermatch', 'browsermatchnocase'}
@@ -194,8 +195,19 @@ def present_modules():
             mods = apacheconf.present_modules()
         except Exception:
             mods = set()
-        _present.append(mods if len(mods) > 1 else PRESENT_MODULES)
+        _present.append(set(mods) | LSAPI_MODULES if len(mods) > 1 else PRESENT_MODULES)
     return _present[0]
+
+
+def merged_php(chain):
+    out = {}
+    for h in chain:
+        for line in h.php:
+            parts = line.split(None, 2)
+            key = parts[1].lower() if len(parts) > 1 else line
+            out.pop(key, None)
+            out[key] = line
+    return list(out.values())
 
 
 def module_present(arg):
@@ -959,7 +971,7 @@ def build(docroot, files, cache=None, include_dirs=None, include_texts=None, php
         return '/' if d == root else '/' + os.path.relpath(d, root).replace(os.sep, '/') + '/'
 
     policy_dirs = {d for d, ht in parsed.items()
-                   if ht.scope.has_policy() or ht.file_headers or handler_differs(ht, php)}
+                   if ht.scope.has_policy() or ht.file_headers or handler_differs(ht, php) or (ht.php and d != root)}
     need = {d for d, ht in parsed.items() if ht.app['values']}
     for d in sorted(need):
         res.app_specs.append(app_spec(parsed[d].path, uri_of(d), parsed[d].app, d, d != root))
@@ -970,7 +982,7 @@ def build(docroot, files, cache=None, include_dirs=None, include_texts=None, php
         ch = chain(d)
         eff = merged_scope([h.scope for h in ch])
         ht = parsed[d]
-        ctx = {'uri': uri_of(d), 'location': d + '/', 'scope': eff, 'rewrite': list(ht.rewrite), 'php': list(ht.php),
+        ctx = {'uri': uri_of(d), 'location': d + '/', 'scope': eff, 'rewrite': list(ht.rewrite), 'php': merged_php(ch),
                'mime': list(eff.mime), 'pre_rules': list(eff.pre_rules),
                'file_headers': [fh + (level,) for level, h in enumerate(ch) for fh in h.file_headers]}
         for h in reversed(ch):

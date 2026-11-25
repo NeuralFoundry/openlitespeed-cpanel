@@ -156,6 +156,22 @@ class ReviewFixesTest(unittest.TestCase):
         self.assertEqual(vht.php_root, ['php_value memory_limit 256M'])
         self.assertTrue(any('php_admin_value' in i for _p, issues in vht.report for i in issues))
 
+    def test_subdirectory_php_values_get_a_context(self):
+        self.t.htaccess('', 'php_value memory_limit 256M\nphp_value max_input_vars 3000\n')
+        self.t.htaccess('up', 'php_value upload_max_filesize 64M\nphp_value max_input_vars 9000\n')
+        self.t.htaccess('other', 'RewriteEngine On\n')
+        vh = vhost(self.t)
+        vh.lsphp = '/opt/cpanel/ea-php83/root/usr/bin/lsphp'
+        vht = render.htaccess.build(self.t.docroot, self.t.files(), {}, None, [], vh.php)
+        conf = render.render_vhost(vh, state(), {'cache_module': False}, vht)
+        body = block(conf, '/up/')
+        self.assertIn('php_value memory_limit 256M', body)
+        self.assertIn('php_value upload_max_filesize 64M', body)
+        self.assertIn('php_value max_input_vars 9000', body)
+        self.assertNotIn('max_input_vars 3000', body)
+        self.assertNotIn('context /other/ {', conf)
+        self.assertNotIn('context / {', conf)
+
     def test_files_match_with_dropped_directives_is_reported(self):
         self.t.htaccess('', '<FilesMatch "\\.(php)$">\nHeader set A b\nSetHandler none\n</FilesMatch>\n')
         conf, vht = self.render()

@@ -95,6 +95,11 @@ def config_dirs():
     return dirs
 
 
+def php_dirs():
+    base = const.EA_PHP_ROOT + '/ea-php*/root'
+    return sorted(glob.glob(base + '/etc') + glob.glob(base + '/etc/php.d') + glob.glob(base + '/usr/bin'))
+
+
 def open_notify():
     path = const.HT_NOTIFY
     try:
@@ -140,6 +145,7 @@ class Watcher(object):
         self.pending_conf = 0.0
         self.pending_ht = 0.0
         self.pending_scan = 0.0
+        self.pending_php = 0.0
         self.scan_paths = set()
         self.home_roots = {}
         self.first = 0.0
@@ -206,6 +212,9 @@ class Watcher(object):
         for d in config_dirs():
             if os.path.isdir(d):
                 self.ino.add(d, 'conf')
+        for d in php_dirs():
+            if os.path.isdir(d):
+                self.ino.add(d, 'php')
         if self.settings.get('htaccess_watch', True):
             ht_dirs, pw_dirs = docroot_dirs()
             for d in ht_dirs:
@@ -229,6 +238,8 @@ class Watcher(object):
             return 'conf'
         if kind == 'ht':
             return 'ht' if name == '.htaccess' else None
+        if kind == 'php':
+            return 'php' if name.endswith('.ini') or name == 'lsphp' else None
         if kind == 'pw':
             if name == '.htpasswds' or path.endswith('/.htpasswds') or '/.htpasswds/' in path + '/':
                 return 'scan'
@@ -243,6 +254,10 @@ class Watcher(object):
 
     def handle(self):
         now = time.time()
+        if self.pending_php and now - self.pending_php >= QUIET:
+            self.pending_php = 0.0
+            if server.running():
+                server.restart_php('PHP settings or binary changed')
         if not (self.pending_conf or self.pending_ht or self.pending_scan):
             return
         last = max(self.pending_conf, self.pending_ht, self.pending_scan)
@@ -305,6 +320,9 @@ class Watcher(object):
                 for path, kind, name, mask in self.ino.read():
                     c = self.classify(path, kind, name, mask)
                     if not c:
+                        continue
+                    if c == 'php':
+                        self.pending_php = time.time()
                         continue
                     now = time.time()
                     if not self.first:

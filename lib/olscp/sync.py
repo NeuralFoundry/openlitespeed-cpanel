@@ -110,6 +110,18 @@ def config_errors(since):
         '[PlainConf]' in e or 'Fatal error' in e or 'failed to start listener' in e)]
 
 
+def php_processors(text):
+    out, keep = [], False
+    for line in (text or '').splitlines():
+        if line.startswith('extprocessor lsphp'):
+            keep = True
+        if keep:
+            out.append(line)
+            if line.strip() == '}':
+                keep = False
+    return out
+
+
 def sync(restart=False, reason='manual', force_restart=False, overrides=None):
     const.ensure_dirs()
     started = time.time()
@@ -175,6 +187,9 @@ def sync(restart=False, reason='manual', force_restart=False, overrides=None):
                     server.systemd_reattach()
                 ok = False
             errors = server.recent_errors(t0)
+        php_changed = php_processors(previous.get(const.OLS_CONF)) != php_processors(files.get(const.OLS_CONF))
+        if did_restart and ok and (php_changed or reason == 'restart'):
+            server.restart_php('configuration changed' if php_changed else reason)
         if lve_mode != old_lve and did_restart and ok and active():
             util.log('CloudLinux mode %s -> %s, restarted %d PHP and application processes' % (
                 old_lve, lve_mode, cloudlinux.stop_workers()))

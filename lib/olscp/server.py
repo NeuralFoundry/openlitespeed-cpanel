@@ -20,10 +20,10 @@ def _env(pidfile):
     if pidfile == const.APACHE_PID:
         env['OLSCP_HT_NOTIFY'] = const.HT_NOTIFY
     try:
-        from . import apacheconf
+        from . import apacheconf, htaccess
         mods = apacheconf.present_modules()
         if len(mods) > 1:
-            env['OLSCP_HT_MODULES'] = ','.join(sorted(mods))
+            env['OLSCP_HT_MODULES'] = ','.join(sorted(set(mods) | htaccess.LSAPI_MODULES))
     except Exception:
         pass
     return env
@@ -200,6 +200,21 @@ def graceful(timeout=30, pidfile=const.APACHE_PID):
         new = old
     util.log('graceful %s %s -> %s' % ('ok' if ok else 'FAILED', old, new), 'INFO' if ok else 'ERROR')
     return ok
+
+
+def restart_php(reason):
+    path = os.path.join(const.OLS_ROOT, 'admin/tmp/.lsphp_restart.txt')
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644)
+        try:
+            os.utime(fd)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        util.log('PHP restart failed: %s' % e, 'WARN')
+        return False
+    util.log('PHP processes restarted: %s' % reason)
+    return True
 
 
 def systemd_reattach():

@@ -657,6 +657,7 @@ def lsphp_processor(root, name, user, group, ver_path, settings):
     ep.kv('maxConns', settings.get('lsphp_max_conns', 10))
     ep.kv('env', 'PHP_LSAPI_CHILDREN=%s' % settings.get('lsphp_children', 10))
     ep.raw('env                      LSAPI_AVOID_FORK=200M')
+    ep.raw('env                      LSPHP_ENABLE_USER_INI=on')
     ep.kv('initTimeout', 300)
     ep.kv('retryTimeout', 0)
     ep.kv('persistConn', 1)
