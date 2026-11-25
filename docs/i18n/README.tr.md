@@ -27,7 +27,7 @@ Web sitesi: [openlitespeed.dev/cpanel-whm](https://openlitespeed.dev/cpanel-whm/
 ## Gereksinimler
 
 - cPanel & WHM 11.130 veya daha yeni
-- AlmaLinux, Rocky Linux veya CloudLinux 8 ya da 9, x86_64
+- AlmaLinux, Rocky Linux veya CloudLinux 8, 9 ya da 10, x86_64
 - EasyApache 4 PHP sürümleri
 
 ## Kurulum

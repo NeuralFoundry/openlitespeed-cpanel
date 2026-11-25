@@ -20,7 +20,10 @@ KEYNAME=RPM-GPG-KEY-litespeed
 [ "$EL" -ge 10 ] && KEYNAME=RPM-GPG-KEY-litespeed2025
 KEY=/etc/pki/rpm-gpg/olscp-$KEYNAME
 install -m 644 "$KEYS/$KEYNAME" "$KEY"
-for k in "$KEYS"/RPM-GPG-KEY-litespeed*; do rpm --import "$k"; done
+rpm --import "$KEYS/$KEYNAME"
+for k in "$KEYS"/RPM-GPG-KEY-litespeed*; do
+    [ "$k" = "$KEYS/$KEYNAME" ] || rpm --import "$k" 2>/dev/null || true
+done
 ALLOWED="$(for k in "$KEYS"/RPM-GPG-KEY-litespeed*; do gpg --with-colons --show-keys "$k" 2>/dev/null | awk -F: '/^pub/{print tolower(substr($5,9))}' || true; done)"
 [ -n "$ALLOWED" ] || { echo "pinned LiteSpeed keys unreadable" >&2; exit 1; }
 
@@ -68,10 +71,21 @@ if [ -z "$SIGKEY" ] || ! echo "$ALLOWED" | grep -qx "${SIGKEY: -8}"; then
 fi
 NEWVER="$(rpm -qp --qf '%{VERSION}' "$RPMF")"
 
+MISSING=""
+for d in $(rpm -qpR "$RPMF" 2>/dev/null | awk '{print $1}' | grep -Ev '^(rpmlib\(|/|lsphp)' | sort -u || true); do
+    rpm -q --whatprovides "$d" >/dev/null 2>&1 || MISSING="$MISSING $d"
+done
+if [ -n "$MISSING" ]; then
+    echo "installing$MISSING"
+    dnf -y -q --setopt=strict=0 install $MISSING >/dev/null 2>&1 || true
+fi
+
 mkdir -p "$TMP/x"
 (cd "$TMP/x" && rpm2cpio "$RPMF" | cpio -idm --quiet)
 SRC="$TMP/x/usr/local/lsws"
 [ -f "$SRC/bin/openlitespeed" ] || { echo "package layout unexpected" >&2; exit 1; }
+LIBS="$(ldd "$SRC/bin/openlitespeed" "$SRC/admin/fcgi-bin/admin_php" 2>/dev/null | awk '/not found/{print $1}' | sort -u | tr '\n' ' ' || true)"
+[ -z "$LIBS" ] || { echo "missing libraries: $LIBS(install the packages that provide them and run again)" >&2; exit 1; }
 
 getent group lsadm >/dev/null || groupadd -r lsadm
 getent passwd lsadm >/dev/null || useradd -g lsadm -d / -r -s /sbin/nologin -c lsadm lsadm

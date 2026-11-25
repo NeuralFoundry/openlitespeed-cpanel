@@ -27,7 +27,7 @@
 ## 系统要求
 
 - cPanel & WHM 11.130 或更新版本
-- AlmaLinux、Rocky Linux 或 CloudLinux 8 或 9，x86_64
+- AlmaLinux、Rocky Linux 或 CloudLinux 8、9 或 10，x86_64
 - EasyApache 4 PHP 版本
 
 ## 安装

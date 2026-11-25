@@ -27,7 +27,7 @@ Site: [openlitespeed.dev/cpanel-whm](https://openlitespeed.dev/cpanel-whm/)
 ## Requisitos
 
 - cPanel & WHM 11.130 ou mais recente
-- AlmaLinux, Rocky Linux ou CloudLinux 8 ou 9, x86_64
+- AlmaLinux, Rocky Linux ou CloudLinux 8, 9 ou 10, x86_64
 - Versões de PHP do EasyApache 4
 
 ## Instalação

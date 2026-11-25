@@ -27,7 +27,7 @@ Web サイト: [openlitespeed.dev/cpanel-whm](https://openlitespeed.dev/cpanel-w
 ## 動作要件
 
 - cPanel & WHM 11.130 以降
-- AlmaLinux、Rocky Linux または CloudLinux 8 か 9、x86_64
+- AlmaLinux、Rocky Linux または CloudLinux 8、9、10、x86_64
 - EasyApache 4 の PHP バージョン
 
 ## インストール

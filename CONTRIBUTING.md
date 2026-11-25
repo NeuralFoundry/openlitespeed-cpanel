@@ -8,7 +8,7 @@ Open an issue with the bug report form. It asks for your OS, cPanel version and 
 
 ## Development setup
 
-You need a cPanel & WHM server on AlmaLinux, Rocky Linux or CloudLinux 8 or 9 that you can break. Do not develop on a production server.
+You need a cPanel & WHM server on AlmaLinux, Rocky Linux or CloudLinux 8, 9 or 10 that you can break. Do not develop on a production server.
 
 ```bash
 git clone https://github.com/NeuralFoundry/openlitespeed-cpanel.git

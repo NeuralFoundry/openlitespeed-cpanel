@@ -27,7 +27,7 @@ Dengan **olscp**, Anda bisa memakai OpenLiteSpeed untuk cPanel: olscp menjalanka
 ## Persyaratan
 
 - cPanel & WHM 11.130 atau lebih baru
-- AlmaLinux, Rocky Linux, atau CloudLinux 8 atau 9, x86_64
+- AlmaLinux, Rocky Linux, atau CloudLinux 8, 9, atau 10, x86_64
 - Versi PHP EasyApache 4
 
 ## Instalasi
