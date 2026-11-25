@@ -54,7 +54,7 @@ OLSCP_OLS_RPM=/root/openlitespeed-1.9.4-2.el9.x86_64.rpm bash install.sh
 
 標準の OpenLiteSpeed バイナリは `.htaccess` のリライトルールを 1 回しか読み込みません。olscp には小さなパッチ (`build/patches/`) が含まれており、変更されたリライトルールを 1 秒以内に再読み込みし、新しい `.htaccess` ファイルも最初のリクエストで検出するので、再起動は不要です。その他のディレクティブはグレースフルリスタートで自動的に適用されます。
 
-各リリースには EL8 と EL9 向けのパッチ適用バイナリが含まれています。olscp はリリースからそれをダウンロードし、`build/prebuilt.txt` の SHA-256 で確認してから切り替えます:
+各リリースには EL8、EL9、EL10 向けのパッチ適用バイナリが含まれています。olscp はリリースからそれをダウンロードし、`build/prebuilt.txt` の SHA-256 で確認してから切り替えます:
 
 ```bash
 olscp ols fetch --use  # download the prebuilt binary and switch to it

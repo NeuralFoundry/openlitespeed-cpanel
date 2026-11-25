@@ -54,7 +54,7 @@ The patch in `build/patches/` applies to the OpenLiteSpeed commit pinned in `bui
 2. Make your change and write the patch again with `git diff > build/patches/0001-htaccess-live-reload.patch`.
 3. On the test server run `olscp ols build`, then `olscp ols use olscp`.
 4. Create, edit and delete `.htaccess` files with rewrite rules while the server is under load, and check `error_log` for crashes.
-5. For a release, build the binary in clean AlmaLinux 8 and 9 containers with `build/build-ols.sh all`, compress it with `gzip -9 -n`, attach it to the release and put its SHA-256 in `build/prebuilt.txt`.
+5. For a release, build the binary in clean AlmaLinux 8, 9 and 10 containers with `build/build-ols.sh all`, compress it with `gzip -9 -n`, attach it to the release and put its SHA-256 in `build/prebuilt.txt`.
 
 ## Pull requests
 

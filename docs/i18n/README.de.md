@@ -54,7 +54,7 @@ OLSCP_OLS_RPM=/root/openlitespeed-1.9.4-2.el9.x86_64.rpm bash install.sh
 
 Das Standard-Binary von OpenLiteSpeed lädt die Rewrite-Regeln aus `.htaccess` nur einmal. olscp enthält einen kleinen Patch (`build/patches/`), der geänderte Rewrite-Regeln innerhalb einer Sekunde neu lädt und neue `.htaccess`-Dateien bei der ersten Anfrage erkennt, ganz ohne Neustart. Andere Direktiven werden automatisch mit einem Graceful Restart übernommen.
 
-Jedes Release enthält das gepatchte Binary für EL8 und EL9. olscp lädt es aus dem Release, prüft es gegen die SHA-256-Prüfsumme in `build/prebuilt.txt` und wechselt darauf:
+Jedes Release enthält das gepatchte Binary für EL8, EL9 und EL10. olscp lädt es aus dem Release, prüft es gegen die SHA-256-Prüfsumme in `build/prebuilt.txt` und wechselt darauf:
 
 ```bash
 olscp ols fetch --use  # download the prebuilt binary and switch to it

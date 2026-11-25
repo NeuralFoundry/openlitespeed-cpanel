@@ -54,7 +54,7 @@ OLSCP_OLS_RPM=/root/openlitespeed-1.9.4-2.el9.x86_64.rpm bash install.sh
 
 Стандартный бинарный файл OpenLiteSpeed загружает правила rewrite из `.htaccess` только один раз. В olscp есть небольшой патч (`build/patches/`), который перезагружает изменённые правила rewrite в течение секунды и находит новые файлы `.htaccess` при первом запросе, без перезапуска. Остальные директивы применяются автоматически через мягкий перезапуск (graceful restart).
 
-В каждом релизе есть пропатченный бинарный файл для EL8 и EL9. olscp скачивает его из релиза, сверяет с SHA-256 из `build/prebuilt.txt` и переключается на него:
+В каждом релизе есть пропатченный бинарный файл для EL8, EL9 и EL10. olscp скачивает его из релиза, сверяет с SHA-256 из `build/prebuilt.txt` и переключается на него:
 
 ```bash
 olscp ols fetch --use  # download the prebuilt binary and switch to it

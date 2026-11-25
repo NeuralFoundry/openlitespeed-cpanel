@@ -56,8 +56,8 @@ libs() {
     for l in $LIBS; do
         if [ -f "../.olscp-$l" ]; then continue; fi
         say "lib $l"
-        if [ "$l" = libaio ]; then
-            libaio > "$WORK/lib-$l.log" 2>&1 || { tail -30 "$WORK/lib-$l.log"; exit 1; }
+        if [ "$l" = libaio ] || [ "$l" = udns ]; then
+            "$l" > "$WORK/lib-$l.log" 2>&1 || { tail -30 "$WORK/lib-$l.log"; exit 1; }
         else
             ./build_$l.sh > "$WORK/lib-$l.log" 2>&1 || { tail -30 "$WORK/lib-$l.log"; exit 1; }
         fi
@@ -74,6 +74,20 @@ libaio() {
     tar xzf "$f"
     make -C "libaio-$AIO_VER" prefix="$prefix" install
     rm -f "$prefix"/lib/libaio.so*
+    cd "$prefix/script"
+}
+
+udns() {
+    local prefix="$WORK/third-party"
+    cd "$prefix/src/udns"
+    make clean || true
+    CFLAGS="-g -Wall -W -O2 -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion" \
+        ./configure --disable-ipv6
+    grep -q '^#define HAVE_INET_PTON_NTOP' config.h
+    make
+    cp udns.h "$prefix/include"
+    cp libudns.a "$prefix/lib"
+    ranlib "$prefix/lib/libudns.a"
     cd "$prefix/script"
 }
 

@@ -54,7 +54,7 @@ OLSCP_OLS_RPM=/root/openlitespeed-1.9.4-2.el9.x86_64.rpm bash install.sh
 
 原版 OpenLiteSpeed 二进制文件只加载一次 `.htaccess` 重写规则。olscp 附带一个小补丁（`build/patches/`），可在一秒内重新加载已修改的重写规则，并在首次请求时发现新的 `.htaccess` 文件，无需重启。其他指令会通过平滑重启自动生效。
 
-每个版本都提供适用于 EL8 和 EL9 的补丁版二进制文件。olscp 从发布页面下载它，用 `build/prebuilt.txt` 中的 SHA-256 校验后切换过去：
+每个版本都提供适用于 EL8、EL9 和 EL10 的补丁版二进制文件。olscp 从发布页面下载它，用 `build/prebuilt.txt` 中的 SHA-256 校验后切换过去：
 
 ```bash
 olscp ols fetch --use  # download the prebuilt binary and switch to it
