@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1
+
+- PHP settings changed in the cPanel MultiPHP INI Editor now take effect. Before, WordPress and other sites could keep showing the default 2 MB upload limit
+- PHP restarts by itself within a few seconds when `php.ini`, a file in `php.d` or the `lsphp` binary of an EA4 PHP version changes, when the PHP settings of olscp change, and when OpenLiteSpeed is restarted from WHM or with `olscp restart`. Before, a busy PHP process kept the settings it had read at start, even after a sync or restart
+- `.user.ini` files are read by PHP
+- `php_value` and `php_flag` inside `<IfModule lsapi_module>` in `.htaccess`, as written by the MultiPHP INI Editor, are applied
+- `php_value` and `php_flag` in the `.htaccess` of a subdirectory are applied there, together with the values of the parent directories like Apache does
+
 ## 0.7.0
 
 - Safe switch to OpenLiteSpeed: `olscp enable` checks every site over HTTP and HTTPS after the switch and, if a site that worked on Apache fails on OpenLiteSpeed, restores Apache automatically. Pass `olscp enable --no-rollback` to keep OpenLiteSpeed anyway, `--no-verify` to skip the check
